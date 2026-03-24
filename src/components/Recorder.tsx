@@ -23,7 +23,12 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const fileInputRef = useRef<HTMLInputElement>(null);
   const startedAtRef = useRef<string>("");
   const mimeTypeRef = useRef<string>("audio/webm");
-  const isStoppingRef = useRef(false);
+  const onRecordingCompleteRef = useRef(onRecordingComplete);
+
+  // Keep callback ref up to date
+  useEffect(() => {
+    onRecordingCompleteRef.current = onRecordingComplete;
+  }, [onRecordingComplete]);
 
   useEffect(() => {
     return () => {
@@ -32,38 +37,24 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
     };
   }, []);
 
-  const createRecorder = useCallback((stream: MediaStream) => {
-    const recorder = new MediaRecorder(stream, {
-      mimeType: mimeTypeRef.current,
-      audioBitsPerSecond: 32000,
-    });
+  // Save current chunks as a segment
+  const saveCurrentChunks = useCallback(() => {
+    if (chunksRef.current.length > 0) {
+      const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
+      segmentsRef.current.push(blob);
+      chunksRef.current = [];
+      setSegmentCount(segmentsRef.current.length);
+    }
+  }, []);
 
-    chunksRef.current = [];
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-
-    recorder.onstop = () => {
-      if (chunksRef.current.length > 0) {
-        const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
-        segmentsRef.current.push(blob);
-        chunksRef.current = [];
-        setSegmentCount(segmentsRef.current.length);
-      }
-
-      if (isStoppingRef.current) {
-        // Final segment: clean up and return all segments
-        stream.getTracks().forEach((t) => t.stop());
-        onRecordingComplete([...segmentsRef.current], startedAtRef.current);
-        isStoppingRef.current = false;
-      }
-    };
-
-    recorder.start(1000);
-    mediaRecorderRef.current = recorder;
-    return recorder;
-  }, [onRecordingComplete]);
+  // Finalize: stop stream and return all segments
+  const finalize = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    onRecordingCompleteRef.current([...segmentsRef.current], startedAtRef.current);
+  }, []);
 
   const startRecording = useCallback(async () => {
     try {
@@ -81,14 +72,27 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
 
       // Reset state
       segmentsRef.current = [];
-      isStoppingRef.current = false;
+      chunksRef.current = [];
       setSegmentCount(0);
 
       const now = new Date();
       startedAtRef.current = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 
-      // Start first recorder
-      createRecorder(stream);
+      // Start recorder
+      const startNewRecorder = () => {
+        const recorder = new MediaRecorder(stream, {
+          mimeType: mimeTypeRef.current,
+          audioBitsPerSecond: 32000,
+        });
+        chunksRef.current = [];
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunksRef.current.push(e.data);
+        };
+        recorder.start(1000);
+        mediaRecorderRef.current = recorder;
+      };
+
+      startNewRecorder();
       setIsRecording(true);
       setElapsed(0);
 
@@ -97,27 +101,26 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
         setElapsed((prev) => prev + 1);
       }, 1000);
 
-      // Auto-segment timer
+      // Auto-segment timer: stop current recorder, save segment, start new one
       segmentTimerRef.current = setInterval(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-          mediaRecorderRef.current.stop(); // triggers onstop → saves segment
-          // Start new recorder on same stream
-          setTimeout(() => {
-            if (streamRef.current && !isStoppingRef.current) {
-              createRecorder(streamRef.current);
-            }
-          }, 100);
+        const recorder = mediaRecorderRef.current;
+        if (recorder && recorder.state === "recording") {
+          // Request final data, then stop
+          recorder.requestData();
+          recorder.stop();
+          // Save and start new
+          saveCurrentChunks();
+          startNewRecorder();
         }
       }, SEGMENT_DURATION);
     } catch (err) {
       alert("マイクへのアクセスが許可されていません。ブラウザの設定を確認してください。");
       console.error(err);
     }
-  }, [createRecorder]);
+  }, [saveCurrentChunks]);
 
   const stopRecording = useCallback(() => {
-    isStoppingRef.current = true;
-
+    // Clear timers first
     if (segmentTimerRef.current) {
       clearInterval(segmentTimerRef.current);
       segmentTimerRef.current = null;
@@ -127,12 +130,23 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       timerRef.current = null;
     }
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop(); // onstop will call onRecordingComplete
-    }
-
     setIsRecording(false);
-  }, []);
+
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === "recording") {
+      // Recorder is active: request final data, stop, save, finalize
+      recorder.requestData();
+      recorder.onstop = () => {
+        saveCurrentChunks();
+        finalize();
+      };
+      recorder.stop();
+    } else {
+      // Recorder already inactive: just save any remaining chunks and finalize
+      saveCurrentChunks();
+      finalize();
+    }
+  }, [saveCurrentChunks, finalize]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
