@@ -12,7 +12,7 @@
 | フレームワーク | Next.js 15 (App Router) |
 | 言語 | TypeScript |
 | スタイリング | Tailwind CSS |
-| AI API | Google Gemini 2.0 Flash（音声処理＋議事録生成） |
+| AI API | Google Gemini 2.5 Flash（音声処理＋議事録生成） |
 | ホスティング | Vercel（無料プラン） |
 | PWA | Service Worker + Web App Manifest |
 
@@ -36,7 +36,7 @@
            │ ストリーミング応答
            ▼
 ┌─────────────────────────────┐
-│  Google Gemini 2.0 Flash     │
+│  Google Gemini 2.5 Flash     │
 │  - 音声認識（文字起こし）       │
 │  - 話者分離（声の識別）         │
 │  - 議事録テンプレートで整形     │
@@ -46,9 +46,10 @@
 ## 画面遷移
 
 1. **ログイン画面** → パスワード入力
-2. **録音画面** → 録音ボタン or ファイルアップロード
+2. **録音画面** → 録音ボタン or ファイルアップロード / 「過去の議事録を見る」
 3. **処理中画面** → ストリーミングで議事録がリアルタイム表示
-4. **完成画面** → コピー / ダウンロード / 新規録音
+4. **完成画面** → コピー / ダウンロード / 新規録音（自動で履歴に保存）
+5. **履歴画面** → 過去の議事録一覧 → 選択して閲覧・コピー・削除
 
 ## API仕様
 
@@ -65,7 +66,7 @@
 音声から議事録を生成。ストリーミングレスポンス。
 
 - Header: `x-app-password: string`
-- Body: `FormData` with `audio` field (audio file)
+- Body: `FormData` with `audio` field (audio file), optional `recordedAt` field (録音開始時刻、ローカル時刻フォーマット済み文字列)
 - Response: `text/plain` (streaming)
 
 ## 議事録テンプレート
@@ -118,10 +119,15 @@
 6. 発行されたURL（`https://xxx.vercel.app`）にスマホでアクセス
 7. ホーム画面に追加すればアプリとして使える
 
+## 実装済み追加機能
+
+- **履歴機能**: 議事録生成後にlocalStorageへ自動保存（最大50件）。一覧表示・閲覧・削除が可能
+- **録音時刻の自動記録**: 録音開始時のローカル時刻を議事録の日時欄に自動反映
+
 ## 今後の拡張候補
 
 - 長時間録音対応（チャンク分割処理 or Vercel Blob Storage）
-- 議事録の履歴保存（Vercel KV or Supabase）
+- 議事録の履歴をサーバー側に保存（Vercel KV or Supabase）
 - PDF出力
 - 議事録テンプレートのカスタマイズ
 - リアルタイム文字起こし表示
