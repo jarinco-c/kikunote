@@ -1,8 +1,8 @@
-# 会議議事録AI - 仕様書
+# きくノート - 仕様書
 
 ## 概要
 
-スマホから会議を録音し、AIが自動で議事録を生成するPWA（Progressive Web App）。
+「きくノート」は、スマホから会議を録音し、AIが自動で議事録を生成するPWA（Progressive Web App）。
 録音 → 文字起こし → 話者分離 → 議事録整形をワンストップで完結する。
 
 ## 技術スタック
@@ -27,11 +27,12 @@
            │ FormData (音声)
            ▼
 ┌─────────────────────────────┐
-│  Vercel Serverless Function  │
-│  /api/generate-minutes       │
-│  - 認証チェック               │
-│  - 音声をbase64変換           │
-│  - Gemini APIにストリーミング送信│
+│  Vercel Serverless Function      │
+│  /api/transcribe (セグメント単位) │
+│  /api/generate-minutes (整形)    │
+│  - 認証チェック                   │
+│  - 音声をbase64変換               │
+│  - Gemini APIにストリーミング送信  │
 └──────────┬──────────────────┘
            │ ストリーミング応答
            ▼
@@ -61,12 +62,26 @@
 - Response 200: `{ "ok": true }`
 - Response 401: `{ "error": "Unauthorized" }`
 
-### POST /api/generate-minutes
+### POST /api/transcribe
 
-音声から議事録を生成。ストリーミングレスポンス。
+音声セグメントを文字起こし（長時間録音時に使用）。
 
 - Header: `x-app-password: string`
-- Body: `FormData` with `audio` field (audio file), optional `recordedAt` field (録音開始時刻、ローカル時刻フォーマット済み文字列)
+- Body: `FormData` with `audio` field, optional `segmentIndex` / `totalSegments`
+- Response: `{ "transcript": "string" }`
+
+### POST /api/generate-minutes
+
+議事録を生成。2つのモードに対応。ストリーミングレスポンス。
+
+**モード1: 音声から直接（短い録音向け）**
+- Header: `x-app-password: string`
+- Body: `FormData` with `audio` field, optional `recordedAt`
+- Response: `text/plain` (streaming)
+
+**モード2: 文字起こしテキストから（長時間録音向け）**
+- Header: `x-app-password: string`, `Content-Type: application/json`
+- Body: `{ "transcript": "string", "recordedAt": "string" }`
 - Response: `text/plain` (streaming)
 
 ## 議事録テンプレート
@@ -104,7 +119,8 @@
 
 ## 制約事項
 
-- **音声ファイルサイズ**: Vercel無料プランのペイロード上限は4.5MB（約15〜18分の音声に相当）
+- **1セグメントあたりの上限**: Vercel無料プランのペイロード上限は4.5MB（約18分相当）。10分ごとに自動分割するため通常問題なし
+- **録音時間**: 自動セグメント分割により1時間以上の会議に対応
 - **処理時間**: Vercel無料プランのFunction実行時間は10秒だが、ストリーミングにより長い音声も処理可能
 - **話者分離精度**: Geminiの音声認識に依存。はっきり話す場合に精度が高い
 - **対応音声形式**: WebM/Opus（ブラウザ録音）、MP3、WAV、M4A等
@@ -122,12 +138,12 @@
 ## 実装済み追加機能
 
 - **履歴機能**: 議事録生成後にlocalStorageへ自動保存（最大50件）。一覧表示・閲覧・削除が可能
-- **録音時刻の自動記録**: 録音開始時のローカル時刻を議事録の日時欄に自動反映
+- **録音時刻の自動記録**: 録音開始時のローカル時刻（日本時間）を議事録の日時欄に自動反映
+- **長時間録音**: 10分ごとに自動セグメント分割。各セグメントを順次文字起こし→結合→議事録整形
 
 ## 今後の拡張候補
 
-- 長時間録音対応（チャンク分割処理 or Vercel Blob Storage）
-- 議事録の履歴をサーバー側に保存（Vercel KV or Supabase）
+- 議事録の履歴をサーバー側に保存（Supabase等。どの端末からも閲覧可能に）
 - PDF出力
 - 議事録テンプレートのカスタマイズ
 - リアルタイム文字起こし表示
