@@ -14,14 +14,16 @@ export default function Home() {
   const [minutes, setMinutes] = useState("");
   const [progress, setProgress] = useState("");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [recordedAt, setRecordedAt] = useState<string>("");
 
   const handleLogin = (pw: string) => {
     setPassword(pw);
     setState("ready");
   };
 
-  const handleAudioReady = useCallback((blob: Blob) => {
+  const handleAudioReady = useCallback((blob: Blob, startedAt: string) => {
     setAudioBlob(blob);
+    setRecordedAt(startedAt);
   }, []);
 
   const handleFileSelected = useCallback((file: File) => {
@@ -38,6 +40,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("audio", audioBlob);
+      if (recordedAt) formData.append("recordedAt", recordedAt);
 
       setProgress("AIが音声を分析中...");
 

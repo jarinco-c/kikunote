@@ -47,10 +47,20 @@ export async function POST(request: Request) {
       return new Response("No audio file provided", { status: 400 });
     }
 
+    const recordedAt = formData.get("recordedAt") as string | null;
+
     // Convert to base64
     const arrayBuffer = await audioFile.arrayBuffer();
     const base64Audio = Buffer.from(arrayBuffer).toString("base64");
     const mimeType = audioFile.type || "audio/webm";
+
+    // Build prompt with recording time
+    let prompt = PROMPT;
+    if (recordedAt) {
+      const d = new Date(recordedAt);
+      const dateStr = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+      prompt += `\n\n※この録音は ${dateStr} に開始されました。日時欄にはこの情報を使用してください。`;
+    }
 
     // Call Gemini API with streaming
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -62,7 +72,7 @@ export async function POST(request: Request) {
           role: "user",
           parts: [
             { inlineData: { mimeType, data: base64Audio } },
-            { text: PROMPT },
+            { text: prompt },
           ],
         },
       ],

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
 type RecorderProps = {
-  onRecordingComplete: (blob: Blob) => void;
+  onRecordingComplete: (blob: Blob, startedAt: string) => void;
   onFileSelected: (file: File) => void;
   disabled: boolean;
 };
@@ -15,6 +15,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const startedAtRef = useRef<string>("");
 
   useEffect(() => {
     return () => {
@@ -41,6 +42,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       });
 
       chunksRef.current = [];
+      startedAtRef.current = new Date().toISOString();
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
@@ -48,7 +50,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        onRecordingComplete(blob);
+        onRecordingComplete(blob, startedAtRef.current);
       };
 
       recorder.start(1000);
