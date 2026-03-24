@@ -1,6 +1,6 @@
 {
-  "name": "会議議事録AI",
-  "short_name": "議事録AI",
+  "name": "きくノート",
+  "short_name": "きくノート",
   "description": "会議を録音して議事録を自動生成",
   "start_url": "/",
   "display": "standalone",

@@ -34,7 +34,7 @@ export default function LoginForm({ onLogin }: { onLogin: (password: string) => 
   return (
     <div className="flex items-center justify-center min-h-dvh p-4">
       <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-bold text-center">会議議事録AI</h1>
+        <h1 className="text-2xl font-bold text-center">きくノート</h1>
         <p className="text-slate-400 text-center text-sm">パスワードを入力してください</p>
         <input
           type="password"

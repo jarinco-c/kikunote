@@ -173,7 +173,7 @@ export default function Home() {
   return (
     <div className="max-w-lg mx-auto p-4 pb-8">
       <header className="text-center py-4 mb-4">
-        <h1 className="text-xl font-bold">会議議事録AI</h1>
+        <h1 className="text-xl font-bold">きくノート</h1>
       </header>
 
       {/* Ready state: show recorder */}
