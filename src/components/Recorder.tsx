@@ -42,7 +42,8 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       });
 
       chunksRef.current = [];
-      startedAtRef.current = new Date().toISOString();
+      const now = new Date();
+      startedAtRef.current = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };

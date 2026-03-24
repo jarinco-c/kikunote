@@ -57,9 +57,7 @@ export async function POST(request: Request) {
     // Build prompt with recording time
     let prompt = PROMPT;
     if (recordedAt) {
-      const d = new Date(recordedAt);
-      const dateStr = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-      prompt += `\n\n※この録音は ${dateStr} に開始されました。日時欄にはこの情報を使用してください。`;
+      prompt += `\n\n※この録音は ${recordedAt} に開始されました。日時欄にはこの情報を使用してください。`;
     }
 
     // Call Gemini API with streaming
