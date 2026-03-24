@@ -2,11 +2,16 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export const maxDuration = 60;
 
-const PROMPT = `あなたは議事録作成の専門家です。
+const AUDIO_PROMPT = `あなたは議事録作成の専門家です。
 この音声は会議の録音です。音声を注意深く聞いて、以下の形式で議事録を作成してください。
 
 話者が複数いる場合は、声の違いから話者を識別し（話者A、話者B 等）、発言を区別してください。
-話者が1人の場合は、その旨を記載してください。
+話者が1人の場合は、その旨を記載してください。`;
+
+const TRANSCRIPT_PROMPT = `あなたは議事録作成の専門家です。
+以下は会議の文字起こしテキストです。この内容を元に議事録を作成してください。`;
+
+const MINUTES_TEMPLATE = `
 
 ## 議事録
 
@@ -29,54 +34,60 @@ const PROMPT = `あなたは議事録作成の専門家です。
 （その他特記事項。なければ省略）
 
 ---
-重要: 音声の内容に忠実に作成してください。聞き取れない部分は「（聞き取り不明）」と記載してください。`;
+重要: 内容に忠実に作成してください。聞き取れない部分は「（聞き取り不明）」と記載してください。`;
 
 export async function POST(request: Request) {
   try {
-    // Verify password
     const appPassword = process.env.APP_PASSWORD;
     const authHeader = request.headers.get("x-app-password");
     if (!appPassword || authHeader !== appPassword) {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    // Get audio data from form
-    const formData = await request.formData();
-    const audioFile = formData.get("audio") as File | null;
-    if (!audioFile) {
-      return new Response("No audio file provided", { status: 400 });
+    const contentType = request.headers.get("content-type") || "";
+    let prompt: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parts: any[] = [];
+
+    if (contentType.includes("application/json")) {
+      // Text-based: transcript from segmented recording
+      const body = await request.json();
+      const { transcript, recordedAt } = body;
+      if (!transcript) {
+        return new Response("No transcript provided", { status: 400 });
+      }
+      prompt = TRANSCRIPT_PROMPT + MINUTES_TEMPLATE;
+      if (recordedAt) {
+        prompt += `\n\n※この会議は ${recordedAt} に開始されました。日時欄にはこの情報を使用してください。`;
+      }
+      parts.push({ text: `${prompt}\n\n--- 文字起こしテキスト ---\n${transcript}` });
+    } else {
+      // Audio-based: single short recording
+      const formData = await request.formData();
+      const audioFile = formData.get("audio") as File | null;
+      if (!audioFile) {
+        return new Response("No audio file provided", { status: 400 });
+      }
+      const recordedAt = formData.get("recordedAt") as string | null;
+      const arrayBuffer = await audioFile.arrayBuffer();
+      const base64Audio = Buffer.from(arrayBuffer).toString("base64");
+      const mimeType = audioFile.type || "audio/webm";
+
+      prompt = AUDIO_PROMPT + MINUTES_TEMPLATE;
+      if (recordedAt) {
+        prompt += `\n\n※この録音は ${recordedAt} に開始されました。日時欄にはこの情報を使用してください。`;
+      }
+      parts.push({ inlineData: { mimeType, data: base64Audio } });
+      parts.push({ text: prompt });
     }
 
-    const recordedAt = formData.get("recordedAt") as string | null;
-
-    // Convert to base64
-    const arrayBuffer = await audioFile.arrayBuffer();
-    const base64Audio = Buffer.from(arrayBuffer).toString("base64");
-    const mimeType = audioFile.type || "audio/webm";
-
-    // Build prompt with recording time
-    let prompt = PROMPT;
-    if (recordedAt) {
-      prompt += `\n\n※この録音は ${recordedAt} に開始されました。日時欄にはこの情報を使用してください。`;
-    }
-
-    // Call Gemini API with streaming
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const result = await model.generateContentStream({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType, data: base64Audio } },
-            { text: prompt },
-          ],
-        },
-      ],
+      contents: [{ role: "user", parts }],
     });
 
-    // Stream the response back
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
