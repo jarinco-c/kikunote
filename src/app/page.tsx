@@ -4,8 +4,9 @@ import { useState, useCallback } from "react";
 import LoginForm from "@/components/LoginForm";
 import Recorder from "@/components/Recorder";
 import MinutesDisplay from "@/components/MinutesDisplay";
+import History, { saveToHistory, type HistoryEntry } from "@/components/History";
 
-type AppState = "login" | "ready" | "processing" | "done";
+type AppState = "login" | "ready" | "processing" | "done" | "history" | "viewing";
 
 export default function Home() {
   const [state, setState] = useState<AppState>("login");
@@ -51,7 +52,6 @@ export default function Home() {
         throw new Error(errorText || `エラー: ${res.status}`);
       }
 
-      // Read streaming response
       const reader = res.body?.getReader();
       if (!reader) throw new Error("ストリームを読み取れません");
 
@@ -67,6 +67,9 @@ export default function Home() {
         fullText += chunk;
         setMinutes(fullText);
       }
+
+      // Save to history automatically
+      saveToHistory(fullText);
 
       setState("done");
     } catch (err) {
@@ -84,6 +87,11 @@ export default function Home() {
     setMinutes("");
     setProgress("");
     setState("ready");
+  };
+
+  const handleViewHistory = (entry: HistoryEntry) => {
+    setMinutes(entry.content);
+    setState("viewing");
   };
 
   if (state === "login") {
@@ -125,6 +133,14 @@ export default function Home() {
               </button>
             </div>
           )}
+
+          {/* History button */}
+          <button
+            onClick={() => setState("history")}
+            className="w-full py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm text-slate-300 transition-colors"
+          >
+            過去の議事録を見る
+          </button>
         </div>
       )}
 
@@ -149,6 +165,16 @@ export default function Home() {
       {/* Done state */}
       {state === "done" && (
         <MinutesDisplay content={minutes} onReset={handleReset} />
+      )}
+
+      {/* History list */}
+      {state === "history" && (
+        <History onSelect={handleViewHistory} onBack={() => setState("ready")} />
+      )}
+
+      {/* Viewing a past entry */}
+      {state === "viewing" && (
+        <MinutesDisplay content={minutes} onReset={() => setState("history")} />
       )}
     </div>
   );
