@@ -21,7 +21,7 @@ export async function POST(request: Request) {
 
   const { data: user, error } = await getSupabase()
     .from("users")
-    .select("id, user_id, password_hash, display_name")
+    .select("id, user_id, password_hash, display_name, is_admin")
     .eq("user_id", userId)
     .single();
 
@@ -47,6 +47,7 @@ export async function POST(request: Request) {
       ok: true,
       userId: user.user_id,
       displayName: user.display_name,
+      isAdmin: user.is_admin,
     }),
     {
       status: 200,
@@ -67,7 +68,7 @@ export async function GET(request: Request) {
 
   const { data: user } = await getSupabase()
     .from("users")
-    .select("user_id, display_name")
+    .select("user_id, display_name, is_admin")
     .eq("id", authUser.dbId)
     .single();
 
@@ -79,6 +80,7 @@ export async function GET(request: Request) {
     ok: true,
     userId: user.user_id,
     displayName: user.display_name,
+    isAdmin: user.is_admin,
   });
 }
 

@@ -5,7 +5,7 @@ import { useState } from "react";
 export default function LoginForm({
   onLogin,
 }: {
-  onLogin: (userId: string, displayName: string) => void;
+  onLogin: (userId: string, isAdmin?: boolean) => void;
 }) {
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
@@ -27,7 +27,7 @@ export default function LoginForm({
       const data = await res.json();
 
       if (res.ok) {
-        onLogin(data.userId, data.displayName);
+        onLogin(data.userId, data.isAdmin);
       } else {
         setError(data.error || "ログインに失敗しました");
       }

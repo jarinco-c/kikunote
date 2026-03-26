@@ -10,6 +10,7 @@ import History, {
   clearLegacyHistory,
   type HistoryEntry,
 } from "@/components/History";
+import AdminPanel from "@/components/AdminPanel";
 
 type AppState =
   | "loading"
@@ -18,11 +19,13 @@ type AppState =
   | "processing"
   | "done"
   | "history"
-  | "viewing";
+  | "viewing"
+  | "admin";
 
 export default function Home() {
   const [state, setState] = useState<AppState>("loading");
   const [userId, setUserId] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [minutes, setMinutes] = useState("");
   const [progress, setProgress] = useState("");
   const [audioSegments, setAudioSegments] = useState<Blob[]>([]);
@@ -39,6 +42,7 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         setUserId(data.userId);
+        setIsAdmin(data.isAdmin || false);
         setState("ready");
         checkLegacyMigration();
       } else {
@@ -83,8 +87,9 @@ export default function Home() {
     }
   };
 
-  const handleLogin = (loginUserId: string) => {
+  const handleLogin = (loginUserId: string, loginIsAdmin?: boolean) => {
     setUserId(loginUserId);
+    setIsAdmin(loginIsAdmin || false);
     setState("ready");
     checkLegacyMigration();
   };
@@ -315,6 +320,16 @@ export default function Home() {
           >
             過去の議事録を見る
           </button>
+
+          {/* Admin button */}
+          {isAdmin && (
+            <button
+              onClick={() => setState("admin")}
+              className="w-full py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm text-slate-300 transition-colors"
+            >
+              ユーザー管理
+            </button>
+          )}
         </div>
       )}
 
@@ -355,6 +370,11 @@ export default function Home() {
           content={minutes}
           onReset={() => setState("history")}
         />
+      )}
+
+      {/* Admin panel */}
+      {state === "admin" && (
+        <AdminPanel onBack={() => setState("ready")} />
       )}
     </div>
   );
