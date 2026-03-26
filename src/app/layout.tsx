@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: "きくノート",
   description: "会議を録音して議事録を自動生成",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/icon-192.png",
+  },
 };
 
 export const viewport: Viewport = {
