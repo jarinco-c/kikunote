@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getAuthUser } from "@/lib/auth";
 
 export const maxDuration = 60;
 
@@ -38,9 +39,8 @@ const MINUTES_TEMPLATE = `
 
 export async function POST(request: Request) {
   try {
-    const appPassword = process.env.APP_PASSWORD;
-    const authHeader = request.headers.get("x-app-password");
-    if (!appPassword || authHeader !== appPassword) {
+    const authUser = getAuthUser(request);
+    if (!authUser) {
       return new Response("Unauthorized", { status: 401 });
     }
 

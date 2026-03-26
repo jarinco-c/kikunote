@@ -1,37 +1,118 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import LoginForm from "@/components/LoginForm";
 import Recorder from "@/components/Recorder";
 import MinutesDisplay from "@/components/MinutesDisplay";
-import History, { saveToHistory, type HistoryEntry } from "@/components/History";
+import History, {
+  saveToServer,
+  getLegacyHistory,
+  clearLegacyHistory,
+  type HistoryEntry,
+} from "@/components/History";
 
-type AppState = "login" | "ready" | "processing" | "done" | "history" | "viewing";
+type AppState =
+  | "loading"
+  | "login"
+  | "ready"
+  | "processing"
+  | "done"
+  | "history"
+  | "viewing";
 
 export default function Home() {
-  const [state, setState] = useState<AppState>("login");
-  const [password, setPassword] = useState("");
+  const [state, setState] = useState<AppState>("loading");
+  const [userId, setUserId] = useState("");
   const [minutes, setMinutes] = useState("");
   const [progress, setProgress] = useState("");
   const [audioSegments, setAudioSegments] = useState<Blob[]>([]);
   const [recordedAt, setRecordedAt] = useState<string>("");
 
-  const handleLogin = (pw: string) => {
-    setPassword(pw);
-    setState("ready");
+  // Check existing session on mount
+  useEffect(() => {
+    checkSession();
+  }, []);
+
+  const checkSession = async () => {
+    try {
+      const res = await fetch("/api/auth");
+      if (res.ok) {
+        const data = await res.json();
+        setUserId(data.userId);
+        setState("ready");
+        checkLegacyMigration();
+      } else {
+        setState("login");
+      }
+    } catch {
+      setState("login");
+    }
   };
 
-  const handleRecordingComplete = useCallback((segments: Blob[], startedAt: string) => {
-    setAudioSegments(segments);
-    setRecordedAt(startedAt);
-  }, []);
+  const checkLegacyMigration = () => {
+    const legacy = getLegacyHistory();
+    if (legacy.length === 0) return;
+
+    const doMigrate = confirm(
+      `端末に保存された議事録が ${legacy.length} 件あります。サーバーに移行しますか？`
+    );
+    if (doMigrate) {
+      migrateLegacyData(legacy);
+    }
+  };
+
+  const migrateLegacyData = async (
+    legacy: { content: string; createdAt: string; title: string }[]
+  ) => {
+    try {
+      for (const entry of legacy) {
+        await fetch("/api/minutes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: entry.content,
+            title: entry.title,
+            createdAt: entry.createdAt,
+          }),
+        });
+      }
+      clearLegacyHistory();
+      alert("移行が完了しました");
+    } catch {
+      alert("移行中にエラーが発生しました。次回ログイン時に再試行します。");
+    }
+  };
+
+  const handleLogin = (loginUserId: string) => {
+    setUserId(loginUserId);
+    setState("ready");
+    checkLegacyMigration();
+  };
+
+  const handleLogout = async () => {
+    await fetch("/api/auth", { method: "DELETE" });
+    setUserId("");
+    setState("login");
+  };
+
+  const handleRecordingComplete = useCallback(
+    (segments: Blob[], startedAt: string) => {
+      setAudioSegments(segments);
+      setRecordedAt(startedAt);
+    },
+    []
+  );
 
   const handleFileSelected = useCallback((file: File) => {
     setAudioSegments([file]);
     setRecordedAt("");
   }, []);
 
-  const transcribeSegment = async (blob: Blob, index: number, total: number): Promise<string> => {
+  const transcribeSegment = async (
+    blob: Blob,
+    index: number,
+    total: number
+  ): Promise<string> => {
     const formData = new FormData();
     formData.append("audio", blob);
     formData.append("segmentIndex", String(index + 1));
@@ -39,13 +120,14 @@ export default function Home() {
 
     const res = await fetch("/api/transcribe", {
       method: "POST",
-      headers: { "x-app-password": password },
       body: formData,
     });
 
     if (!res.ok) {
       const errorText = await res.text();
-      throw new Error(`セグメント${index + 1}の文字起こしに失敗: ${errorText}`);
+      throw new Error(
+        `セグメント${index + 1}の文字起こしに失敗: ${errorText}`
+      );
     }
 
     const data = await res.json();
@@ -59,7 +141,6 @@ export default function Home() {
 
     const res = await fetch("/api/generate-minutes", {
       method: "POST",
-      headers: { "x-app-password": password },
       body: formData,
     });
 
@@ -74,7 +155,6 @@ export default function Home() {
     const res = await fetch("/api/generate-minutes", {
       method: "POST",
       headers: {
-        "x-app-password": password,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ transcript, recordedAt }),
@@ -116,20 +196,27 @@ export default function Home() {
     try {
       let fullText: string;
 
-      if (audioSegments.length === 1 && audioSegments[0].size <= 3.5 * 1024 * 1024) {
-        // Single small segment: direct audio-to-minutes (one Gemini call)
+      if (
+        audioSegments.length === 1 &&
+        audioSegments[0].size <= 3.5 * 1024 * 1024
+      ) {
         setProgress("AIが音声を分析中...");
         const res = await generateFromAudio(audioSegments[0]);
         fullText = await readStream(res);
       } else {
-        // Multiple segments or large file: transcribe each, then generate minutes
         const transcripts: string[] = [];
         const total = audioSegments.length;
 
         for (let i = 0; i < total; i++) {
           setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
-          const transcript = await transcribeSegment(audioSegments[i], i, total);
-          transcripts.push(`--- セグメント ${i + 1}/${total} ---\n${transcript}`);
+          const transcript = await transcribeSegment(
+            audioSegments[i],
+            i,
+            total
+          );
+          transcripts.push(
+            `--- セグメント ${i + 1}/${total} ---\n${transcript}`
+          );
         }
 
         const combinedTranscript = transcripts.join("\n\n");
@@ -139,11 +226,12 @@ export default function Home() {
         fullText = await readStream(res);
       }
 
-      saveToHistory(fullText);
+      await saveToServer(fullText);
       setState("done");
     } catch (err) {
       console.error(err);
-      const message = err instanceof Error ? err.message : "エラーが発生しました";
+      const message =
+        err instanceof Error ? err.message : "エラーが発生しました";
       setProgress("");
       setMinutes("");
       alert(`議事録の生成に失敗しました: ${message}`);
@@ -164,6 +252,14 @@ export default function Home() {
     setState("viewing");
   };
 
+  if (state === "loading") {
+    return (
+      <div className="flex items-center justify-center min-h-dvh">
+        <div className="inline-block w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   if (state === "login") {
     return <LoginForm onLogin={handleLogin} />;
   }
@@ -174,6 +270,15 @@ export default function Home() {
     <div className="max-w-lg mx-auto p-4 pb-8">
       <header className="text-center py-4 mb-4">
         <h1 className="text-xl font-bold">きくノート</h1>
+        <div className="flex items-center justify-center gap-2 mt-1">
+          <span className="text-xs text-slate-400">{userId}</span>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-slate-500 hover:text-slate-300 underline transition-colors"
+          >
+            ログアウト
+          </button>
+        </div>
       </header>
 
       {/* Ready state: show recorder */}
@@ -189,7 +294,9 @@ export default function Home() {
             <div className="space-y-3">
               <div className="text-center text-sm text-slate-400">
                 音声データ準備完了（{(totalSize / 1024 / 1024).toFixed(1)} MB
-                {audioSegments.length > 1 && ` / ${audioSegments.length}セグメント`}）
+                {audioSegments.length > 1 &&
+                  ` / ${audioSegments.length}セグメント`}
+                ）
               </div>
 
               <button
@@ -236,12 +343,18 @@ export default function Home() {
 
       {/* History list */}
       {state === "history" && (
-        <History onSelect={handleViewHistory} onBack={() => setState("ready")} />
+        <History
+          onSelect={handleViewHistory}
+          onBack={() => setState("ready")}
+        />
       )}
 
       {/* Viewing a past entry */}
       {state === "viewing" && (
-        <MinutesDisplay content={minutes} onReset={() => setState("history")} />
+        <MinutesDisplay
+          content={minutes}
+          onReset={() => setState("history")}
+        />
       )}
     </div>
   );

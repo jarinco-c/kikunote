@@ -1,51 +1,59 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export type HistoryEntry = {
   id: string;
   content: string;
-  createdAt: string;
+  created_at: string;
   title: string;
 };
 
-const STORAGE_KEY = "meeting-minutes-history";
+export async function saveToServer(content: string): Promise<HistoryEntry> {
+  const res = await fetch("/api/minutes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
 
-export function loadHistory(): HistoryEntry[] {
+  if (!res.ok) {
+    throw new Error("議事録の保存に失敗しました");
+  }
+
+  return res.json();
+}
+
+export async function deleteFromServer(id: string): Promise<void> {
+  const res = await fetch(`/api/minutes/${id}`, {
+    method: "DELETE",
+  });
+
+  if (!res.ok) {
+    throw new Error("削除に失敗しました");
+  }
+}
+
+const LEGACY_STORAGE_KEY = "meeting-minutes-history";
+
+export function getLegacyHistory(): {
+  id: string;
+  content: string;
+  createdAt: string;
+  title: string;
+}[] {
   if (typeof window === "undefined") return [];
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
+    const data = localStorage.getItem(LEGACY_STORAGE_KEY);
     return data ? JSON.parse(data) : [];
   } catch {
     return [];
   }
 }
 
-export function saveToHistory(content: string): HistoryEntry {
-  const history = loadHistory();
-  // Extract title from first heading or first line
-  const titleMatch = content.match(/^##?\s*(.+)/m);
-  const title = titleMatch
-    ? titleMatch[1].replace(/\*\*/g, "").trim()
-    : content.slice(0, 30) + "...";
-
-  const entry: HistoryEntry = {
-    id: Date.now().toString(),
-    content,
-    createdAt: new Date().toISOString(),
-    title,
-  };
-
-  history.unshift(entry);
-  // Keep max 50 entries
-  if (history.length > 50) history.pop();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-  return entry;
-}
-
-export function deleteFromHistory(id: string) {
-  const history = loadHistory().filter((e) => e.id !== id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+export function clearLegacyHistory() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
 }
 
 type HistoryProps = {
@@ -54,13 +62,36 @@ type HistoryProps = {
 };
 
 export default function History({ onSelect, onBack }: HistoryProps) {
-  const [entries, setEntries] = useState<HistoryEntry[]>(loadHistory);
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const handleDelete = (id: string, e: React.MouseEvent) => {
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch("/api/minutes");
+      if (!res.ok) throw new Error("取得に失敗しました");
+      const data = await res.json();
+      setEntries(data);
+    } catch {
+      setError("履歴の読み込みに失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("この議事録を削除しますか？")) {
-      deleteFromHistory(id);
-      setEntries(loadHistory());
+    if (!confirm("この議事録を削除しますか？")) return;
+
+    try {
+      await deleteFromServer(id);
+      setEntries((prev) => prev.filter((entry) => entry.id !== id));
+    } catch {
+      alert("削除に失敗しました");
     }
   };
 
@@ -81,8 +112,14 @@ export default function History({ onSelect, onBack }: HistoryProps) {
         </button>
       </div>
 
-      {entries.length === 0 ? (
-        <p className="text-slate-500 text-center py-8">まだ議事録がありません</p>
+      {loading ? (
+        <p className="text-slate-400 text-center py-8">読み込み中...</p>
+      ) : error ? (
+        <p className="text-red-400 text-center py-8">{error}</p>
+      ) : entries.length === 0 ? (
+        <p className="text-slate-500 text-center py-8">
+          まだ議事録がありません
+        </p>
       ) : (
         <div className="space-y-2">
           {entries.map((entry) => (
@@ -94,7 +131,9 @@ export default function History({ onSelect, onBack }: HistoryProps) {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-medium truncate">{entry.title}</p>
-                  <p className="text-sm text-slate-400 mt-1">{formatDate(entry.createdAt)}</p>
+                  <p className="text-sm text-slate-400 mt-1">
+                    {formatDate(entry.created_at)}
+                  </p>
                 </div>
                 <button
                   onClick={(e) => handleDelete(entry.id, e)}

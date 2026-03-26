@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 
-export default function LoginForm({ onLogin }: { onLogin: (password: string) => void }) {
+export default function LoginForm({
+  onLogin,
+}: {
+  onLogin: (userId: string, displayName: string) => void;
+}) {
+  const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -16,13 +21,15 @@ export default function LoginForm({ onLogin }: { onLogin: (password: string) => 
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ userId, password }),
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        onLogin(password);
+        onLogin(data.userId, data.displayName);
       } else {
-        setError("パスワードが違います");
+        setError(data.error || "ログインに失敗しました");
       }
     } catch {
       setError("接続エラーが発生しました");
@@ -35,19 +42,30 @@ export default function LoginForm({ onLogin }: { onLogin: (password: string) => 
     <div className="flex items-center justify-center min-h-dvh p-4">
       <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
         <h1 className="text-2xl font-bold text-center">きくノート</h1>
-        <p className="text-slate-400 text-center text-sm">パスワードを入力してください</p>
+        <p className="text-slate-400 text-center text-sm">
+          ログインしてください
+        </p>
+        <input
+          type="text"
+          value={userId}
+          onChange={(e) => setUserId(e.target.value)}
+          placeholder="ユーザーID"
+          className="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-700 focus:border-blue-500 focus:outline-none text-lg"
+          autoFocus
+          autoComplete="username"
+        />
         <input
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="パスワード"
           className="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-700 focus:border-blue-500 focus:outline-none text-lg"
-          autoFocus
+          autoComplete="current-password"
         />
         {error && <p className="text-red-400 text-sm text-center">{error}</p>}
         <button
           type="submit"
-          disabled={loading || !password}
+          disabled={loading || !userId || !password}
           className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 font-medium text-lg transition-colors"
         >
           {loading ? "確認中..." : "ログイン"}
