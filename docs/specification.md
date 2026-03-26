@@ -132,8 +132,10 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 
 **モード2: 文字起こしテキストから（長時間録音向け）**
 - Cookie: session JWT, `Content-Type: application/json`
-- Body: `{ "transcript": "string", "recordedAt": "string" }`
+- Body: `{ "transcript": "string", "recordedAt": "string", "outputType?": "minutes" | "spec" }`
 - Response: `text/plain` (streaming)
+
+`outputType` パラメータ: `"minutes"`（議事録、デフォルト）または `"spec"`（仕様書）。FormDataの場合は `outputType` フィールドで指定。
 
 ### GET /api/minutes — 議事録一覧
 
@@ -229,6 +231,7 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - **localStorage移行**: 旧バージョンのlocalStorageデータをサーバーに自動移行
 - **管理者画面**: 管理者ユーザーのみ表示。アプリ内からユーザーの新規登録・一覧確認が可能
 - **カスタムアイコン**: PWAアイコン・favicon・Appleタッチアイコンに対応
+- **仕様書生成**: 音声から仕様書を自動生成。議事録・仕様書・両方の3モードから選択可能
 
 ## 今後の拡張候補
 
