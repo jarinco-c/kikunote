@@ -1,5 +1,5 @@
-const CACHE_NAME = "meeting-minutes-v1";
-const STATIC_ASSETS = ["/", "/manifest.json"];
+const CACHE_NAME = "kikunote-v2";
+const STATIC_ASSETS = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
