@@ -195,34 +195,36 @@ export default function Home() {
 
   const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
 
-  const generateOne = async (outputType: string): Promise<string> => {
+  // 音声を文字起こしする（複数セグメント対応）
+  const transcribeAll = async (): Promise<string> => {
+    const transcripts: string[] = [];
+    const total = audioSegments.length;
+
+    for (let i = 0; i < total; i++) {
+      setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
+      const transcript = await transcribeSegment(audioSegments[i], i, total);
+      transcripts.push(`--- セグメント ${i + 1}/${total} ---\n${transcript}`);
+    }
+
+    return transcripts.join("\n\n");
+  };
+
+  // 1種類を生成して返す
+  const generateOne = async (outputType: string, transcript?: string): Promise<string> => {
     if (
+      !transcript &&
       audioSegments.length === 1 &&
       audioSegments[0].size <= 3.5 * 1024 * 1024
     ) {
+      // 短い音声は直接AIに渡す
       setProgress(`AIが音声を分析中...（${typeLabel(outputType)}）`);
       const res = await generateFromAudio(audioSegments[0], outputType);
       return await readStream(res);
     } else {
-      const transcripts: string[] = [];
-      const total = audioSegments.length;
-
-      for (let i = 0; i < total; i++) {
-        setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
-        const transcript = await transcribeSegment(
-          audioSegments[i],
-          i,
-          total
-        );
-        transcripts.push(
-          `--- セグメント ${i + 1}/${total} ---\n${transcript}`
-        );
-      }
-
-      const combinedTranscript = transcripts.join("\n\n");
-
+      // 文字起こし済みテキストから生成
+      const text = transcript || await transcribeAll();
       setProgress(`${typeLabel(outputType)}を生成中...`);
-      const res = await generateFromTranscript(combinedTranscript, outputType);
+      const res = await generateFromTranscript(text, outputType);
       return await readStream(res);
     }
   };
@@ -235,13 +237,23 @@ export default function Home() {
 
     try {
       if (mode === "both") {
-        // 議事録を先に生成
-        const minutesText = await generateOne("minutes");
+        // 文字起こしを1回だけ行う
+        let transcript: string | undefined;
+        const isSmallSingle =
+          audioSegments.length === 1 &&
+          audioSegments[0].size <= 3.5 * 1024 * 1024;
+
+        if (!isSmallSingle) {
+          transcript = await transcribeAll();
+        }
+
+        // 議事録を生成
+        const minutesText = await generateOne("minutes", transcript);
         await saveToServer(minutesText);
 
         // 仕様書を生成
         setMinutes("");
-        const specText = await generateOne("spec");
+        const specText = await generateOne("spec", transcript);
         await saveToServer(specText);
 
         // 両方の結果を表示
@@ -386,7 +398,15 @@ export default function Home() {
 
       {/* Done state */}
       {state === "done" && (
-        <MinutesDisplay content={minutes} onReset={handleReset} />
+        <MinutesDisplay
+          content={minutes}
+          onReset={handleReset}
+          onBack={audioSegments.length > 0 ? () => {
+            setMinutes("");
+            setProgress("");
+            setState("ready");
+          } : undefined}
+        />
       )}
 
       {/* History list */}

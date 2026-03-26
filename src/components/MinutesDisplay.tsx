@@ -5,9 +5,10 @@ import { useState } from "react";
 type MinutesDisplayProps = {
   content: string;
   onReset: () => void;
+  onBack?: () => void;
 };
 
-export default function MinutesDisplay({ content, onReset }: MinutesDisplayProps) {
+export default function MinutesDisplay({ content, onReset, onBack }: MinutesDisplayProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -62,6 +63,16 @@ export default function MinutesDisplay({ content, onReset }: MinutesDisplayProps
       <div className="bg-slate-800 rounded-lg p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
         {content}
       </div>
+
+      {/* Back to generate buttons */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="w-full py-3 rounded-lg bg-slate-700 hover:bg-slate-600 font-medium transition-colors"
+        >
+          この音声から再生成
+        </button>
+      )}
 
       {/* New recording button */}
       <button
