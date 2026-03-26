@@ -139,9 +139,10 @@ export default function Home() {
     return data.transcript;
   };
 
-  const generateFromAudio = async (blob: Blob) => {
+  const generateFromAudio = async (blob: Blob, outputType: string = "minutes") => {
     const formData = new FormData();
     formData.append("audio", blob);
+    formData.append("outputType", outputType);
     if (recordedAt) formData.append("recordedAt", recordedAt);
 
     const res = await fetch("/api/generate-minutes", {
@@ -156,13 +157,13 @@ export default function Home() {
     return res;
   };
 
-  const generateFromTranscript = async (transcript: string) => {
+  const generateFromTranscript = async (transcript: string, outputType: string = "minutes") => {
     const res = await fetch("/api/generate-minutes", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ transcript, recordedAt }),
+      body: JSON.stringify({ transcript, recordedAt, outputType }),
     });
 
     if (!res.ok) {
@@ -192,46 +193,64 @@ export default function Home() {
     return fullText;
   };
 
-  const generateMinutes = async () => {
+  const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
+
+  const generateOne = async (outputType: string): Promise<string> => {
+    if (
+      audioSegments.length === 1 &&
+      audioSegments[0].size <= 3.5 * 1024 * 1024
+    ) {
+      setProgress(`AIが音声を分析中...（${typeLabel(outputType)}）`);
+      const res = await generateFromAudio(audioSegments[0], outputType);
+      return await readStream(res);
+    } else {
+      const transcripts: string[] = [];
+      const total = audioSegments.length;
+
+      for (let i = 0; i < total; i++) {
+        setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
+        const transcript = await transcribeSegment(
+          audioSegments[i],
+          i,
+          total
+        );
+        transcripts.push(
+          `--- セグメント ${i + 1}/${total} ---\n${transcript}`
+        );
+      }
+
+      const combinedTranscript = transcripts.join("\n\n");
+
+      setProgress(`${typeLabel(outputType)}を生成中...`);
+      const res = await generateFromTranscript(combinedTranscript, outputType);
+      return await readStream(res);
+    }
+  };
+
+  const generate = async (mode: "minutes" | "spec" | "both") => {
     if (audioSegments.length === 0) return;
 
     setState("processing");
     setMinutes("");
 
     try {
-      let fullText: string;
+      if (mode === "both") {
+        // 議事録を先に生成
+        const minutesText = await generateOne("minutes");
+        await saveToServer(minutesText);
 
-      if (
-        audioSegments.length === 1 &&
-        audioSegments[0].size <= 3.5 * 1024 * 1024
-      ) {
-        setProgress("AIが音声を分析中...");
-        const res = await generateFromAudio(audioSegments[0]);
-        fullText = await readStream(res);
+        // 仕様書を生成
+        setMinutes("");
+        const specText = await generateOne("spec");
+        await saveToServer(specText);
+
+        // 両方の結果を表示
+        setMinutes(minutesText + "\n\n---\n\n" + specText);
       } else {
-        const transcripts: string[] = [];
-        const total = audioSegments.length;
-
-        for (let i = 0; i < total; i++) {
-          setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
-          const transcript = await transcribeSegment(
-            audioSegments[i],
-            i,
-            total
-          );
-          transcripts.push(
-            `--- セグメント ${i + 1}/${total} ---\n${transcript}`
-          );
-        }
-
-        const combinedTranscript = transcripts.join("\n\n");
-
-        setProgress("議事録を生成中...");
-        const res = await generateFromTranscript(combinedTranscript);
-        fullText = await readStream(res);
+        const fullText = await generateOne(mode);
+        await saveToServer(fullText);
       }
 
-      await saveToServer(fullText);
       setState("done");
     } catch (err) {
       console.error(err);
@@ -239,7 +258,7 @@ export default function Home() {
         err instanceof Error ? err.message : "エラーが発生しました";
       setProgress("");
       setMinutes("");
-      alert(`議事録の生成に失敗しました: ${message}`);
+      alert(`生成に失敗しました: ${message}`);
       setState("ready");
     }
   };
@@ -304,12 +323,26 @@ export default function Home() {
                 ）
               </div>
 
-              <button
-                onClick={generateMinutes}
-                className="w-full py-4 rounded-lg bg-green-600 hover:bg-green-500 font-bold text-lg transition-colors shadow-lg shadow-green-600/20"
-              >
-                議事録を生成する
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={() => generate("minutes")}
+                  className="w-full py-4 rounded-lg bg-green-600 hover:bg-green-500 font-bold text-lg transition-colors shadow-lg shadow-green-600/20"
+                >
+                  議事録を生成する
+                </button>
+                <button
+                  onClick={() => generate("spec")}
+                  className="w-full py-4 rounded-lg bg-purple-600 hover:bg-purple-500 font-bold text-lg transition-colors shadow-lg shadow-purple-600/20"
+                >
+                  仕様書を生成する
+                </button>
+                <button
+                  onClick={() => generate("both")}
+                  className="w-full py-3 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm transition-colors"
+                >
+                  両方を生成する
+                </button>
+              </div>
             </div>
           )}
 
