@@ -61,7 +61,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate: 16000 },
+        audio: { channelCount: 1 },
       });
       streamRef.current = stream;
 
@@ -84,7 +84,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       const startNewRecorder = () => {
         const recorder = new MediaRecorder(stream, {
           mimeType: mimeTypeRef.current,
-          audioBitsPerSecond: 32000,
+          audioBitsPerSecond: 96000,
         });
         chunksRef.current = [];
         recorder.ondataavailable = (e) => {
