@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const SEGMENT_DURATION = 10 * 60 * 1000; // 10 minutes per segment
+const SEGMENT_DURATION = 5 * 60 * 1000; // 5 minutes per segment
 
 type RecorderProps = {
   onRecordingComplete: (segments: Blob[], startedAt: string) => void;
