@@ -20,6 +20,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const segmentsRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isSegmentingRef = useRef(false); // セグメント分割処理中フラグ
   const fileInputRef = useRef<HTMLInputElement>(null);
   const startedAtRef = useRef<string>("");
   const mimeTypeRef = useRef<string>("audio/webm");
@@ -101,16 +102,32 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
         setElapsed((prev) => prev + 1);
       }, 1000);
 
-      // Auto-segment timer: stop current recorder, save segment, start new one
+      // 自動セグメント分割タイマー: 旧レコーダーの停止完了を待ってからセグメント保存＆新レコーダー開始
       segmentTimerRef.current = setInterval(() => {
         const recorder = mediaRecorderRef.current;
-        if (recorder && recorder.state === "recording") {
-          // Request final data, then stop
-          recorder.requestData();
+        if (recorder && recorder.state === "recording" && !isSegmentingRef.current) {
+          isSegmentingRef.current = true;
+          recorder.onstop = () => {
+            saveCurrentChunks();
+            try {
+              startNewRecorder();
+            } catch (err) {
+              console.error("セグメント分割中にレコーダー再開失敗:", err);
+              // ストリーム切断等の場合は録音を終了
+              if (timerRef.current) {
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+              }
+              if (segmentTimerRef.current) {
+                clearInterval(segmentTimerRef.current);
+                segmentTimerRef.current = null;
+              }
+              setIsRecording(false);
+              finalize();
+            }
+            isSegmentingRef.current = false;
+          };
           recorder.stop();
-          // Save and start new
-          saveCurrentChunks();
-          startNewRecorder();
         }
       }, SEGMENT_DURATION);
     } catch (err) {
@@ -134,15 +151,22 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "recording") {
-      // Recorder is active: request final data, stop, save, finalize
-      recorder.requestData();
+      // レコーダー停止完了を待ってから最終セグメント保存
       recorder.onstop = () => {
         saveCurrentChunks();
         finalize();
       };
       recorder.stop();
+    } else if (isSegmentingRef.current) {
+      // セグメント分割処理中の場合、完了を待ってからfinalize
+      const waitForSegmenting = setInterval(() => {
+        if (!isSegmentingRef.current) {
+          clearInterval(waitForSegmenting);
+          finalize();
+        }
+      }, 100);
     } else {
-      // Recorder already inactive: just save any remaining chunks and finalize
+      // レコーダー停止済み: 残りのチャンクを保存してfinalize
       saveCurrentChunks();
       finalize();
     }

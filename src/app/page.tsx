@@ -195,18 +195,20 @@ export default function Home() {
 
   const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
 
-  // 音声を文字起こしする（複数セグメント対応）
+  // 音声を文字起こしする（複数セグメント対応・並列処理）
   const transcribeAll = async (): Promise<string> => {
-    const transcripts: string[] = [];
     const total = audioSegments.length;
+    setProgress(`音声を文字起こし中... (${total}セグメント)`);
 
-    for (let i = 0; i < total; i++) {
-      setProgress(`音声を文字起こし中... (${i + 1}/${total})`);
-      const transcript = await transcribeSegment(audioSegments[i], i, total);
-      transcripts.push(`--- セグメント ${i + 1}/${total} ---\n${transcript}`);
-    }
+    // 全セグメントを並列で文字起こし
+    const results = await Promise.all(
+      audioSegments.map((segment, i) => transcribeSegment(segment, i, total))
+    );
 
-    return transcripts.join("\n\n");
+    // セグメント順に結合
+    return results
+      .map((transcript, i) => `--- セグメント ${i + 1}/${total} ---\n${transcript}`)
+      .join("\n\n");
   };
 
   // 1種類を生成して返す
