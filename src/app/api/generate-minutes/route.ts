@@ -145,7 +145,11 @@ export async function POST(request: Request) {
       parts.push({ text: prompt });
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return new Response("GEMINI_API_KEY is not configured", { status: 500 });
+    }
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     const result = await model.generateContentStream({

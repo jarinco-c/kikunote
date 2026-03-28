@@ -21,6 +21,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const segmentTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isSegmentingRef = useRef(false); // セグメント分割処理中フラグ
+  const stoppingRef = useRef(false); // 録音停止処理中フラグ（タイマーとの競合防止）
   const fileInputRef = useRef<HTMLInputElement>(null);
   const startedAtRef = useRef<string>("");
   const mimeTypeRef = useRef<string>("audio/webm");
@@ -105,7 +106,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       // 自動セグメント分割タイマー: 旧レコーダーの停止完了を待ってからセグメント保存＆新レコーダー開始
       segmentTimerRef.current = setInterval(() => {
         const recorder = mediaRecorderRef.current;
-        if (recorder && recorder.state === "recording" && !isSegmentingRef.current) {
+        if (recorder && recorder.state === "recording" && !isSegmentingRef.current && !stoppingRef.current) {
           isSegmentingRef.current = true;
           recorder.onstop = () => {
             saveCurrentChunks();
@@ -148,6 +149,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
     }
 
     setIsRecording(false);
+    stoppingRef.current = true;
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state === "recording") {
