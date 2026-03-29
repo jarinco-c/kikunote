@@ -357,6 +357,37 @@ export default function Home() {
                   両方を生成する
                 </button>
               </div>
+
+              {/* デバッグ用：録音データダウンロード（管理者のみ表示） */}
+              {isAdmin && (
+                <div className="border border-slate-700 rounded-lg p-3 space-y-2">
+                  <div className="text-xs text-slate-500">
+                    録音データの確認（デバッグ用）
+                  </div>
+                  {audioSegments.map((segment, i) => {
+                    const ext = segment.type.includes("mp4") ? "m4a"
+                              : segment.type.includes("webm") ? "webm"
+                              : "bin";
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          const url = URL.createObjectURL(segment);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `recording-segment${i + 1}.${ext}`;
+                          a.click();
+                          // ブラウザがダウンロードを開始するまで待ってから解放
+                          setTimeout(() => URL.revokeObjectURL(url), 10000);
+                        }}
+                        className="w-full py-2 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-400 transition-colors"
+                      >
+                        セグメント{i + 1}をダウンロード（{(segment.size / 1024).toFixed(0)} KB / {segment.type}）
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
