@@ -30,6 +30,8 @@ export default function Home() {
   const [progress, setProgress] = useState("");
   const [audioSegments, setAudioSegments] = useState<Blob[]>([]);
   const [recordedAt, setRecordedAt] = useState<string>("");
+  const [lastTranscript, setLastTranscript] = useState<string>("");
+  const [viewingEntry, setViewingEntry] = useState<HistoryEntry | null>(null);
 
   // Check existing session on mount
   useEffect(() => {
@@ -247,22 +249,34 @@ export default function Home() {
 
         if (!isSmallSingle) {
           transcript = await transcribeAll();
+          setLastTranscript(transcript);
         }
 
         // 議事録を生成
         const minutesText = await generateOne("minutes", transcript);
-        await saveToServer(minutesText);
+        await saveToServer(minutesText, transcript);
 
         // 仕様書を生成
         setMinutes("");
         const specText = await generateOne("spec", transcript);
-        await saveToServer(specText);
+        await saveToServer(specText, transcript);
 
         // 両方の結果を表示
         setMinutes(minutesText + "\n\n---\n\n" + specText);
       } else {
-        const fullText = await generateOne(mode);
-        await saveToServer(fullText);
+        // 文字起こしテキストを取得・保存
+        let transcript: string | undefined;
+        const isSmallSingle =
+          audioSegments.length === 1 &&
+          audioSegments[0].size <= 3.5 * 1024 * 1024;
+
+        if (!isSmallSingle) {
+          transcript = await transcribeAll();
+          setLastTranscript(transcript);
+        }
+
+        const fullText = await generateOne(mode, transcript);
+        await saveToServer(fullText, transcript);
       }
 
       setState("done");
@@ -282,11 +296,14 @@ export default function Home() {
     setRecordedAt("");
     setMinutes("");
     setProgress("");
+    setLastTranscript("");
+    setViewingEntry(null);
     setState("ready");
   };
 
   const handleViewHistory = (entry: HistoryEntry) => {
     setMinutes(entry.content);
+    setViewingEntry(entry);
     setState("viewing");
   };
 
@@ -433,6 +450,7 @@ export default function Home() {
       {state === "done" && (
         <MinutesDisplay
           content={minutes}
+          transcript={lastTranscript || undefined}
           onReset={handleReset}
           onBack={audioSegments.length > 0 ? () => {
             setMinutes("");
@@ -451,10 +469,14 @@ export default function Home() {
       )}
 
       {/* Viewing a past entry */}
-      {state === "viewing" && (
+      {state === "viewing" && viewingEntry && (
         <MinutesDisplay
-          content={minutes}
-          onReset={() => setState("history")}
+          content={viewingEntry.content}
+          transcript={viewingEntry.transcript || undefined}
+          onReset={() => {
+            setViewingEntry(null);
+            setState("history");
+          }}
         />
       )}
 

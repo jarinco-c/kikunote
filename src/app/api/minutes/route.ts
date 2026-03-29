@@ -11,7 +11,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await getSupabase()
     .from("minutes")
-    .select("id, title, content, created_at")
+    .select("id, title, content, transcript, created_at")
     .eq("user_id", authUser.dbId)
     .order("created_at", { ascending: false })
     .limit(100);
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { content, title: providedTitle, createdAt } = await request.json();
+  const { content, transcript, title: providedTitle, createdAt } = await request.json();
 
   if (!content) {
     return NextResponse.json(
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
     user_id: authUser.dbId,
     title,
     content,
+    transcript: transcript || null,
   };
 
   // Allow specifying created_at for migration
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
   const { data, error } = await getSupabase()
     .from("minutes")
     .insert(insertData)
-    .select("id, title, content, created_at")
+    .select("id, title, content, transcript, created_at")
     .single();
 
   if (error) {

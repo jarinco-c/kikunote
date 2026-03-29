@@ -5,15 +5,16 @@ import { useState, useEffect } from "react";
 export type HistoryEntry = {
   id: string;
   content: string;
+  transcript: string | null;
   created_at: string;
   title: string;
 };
 
-export async function saveToServer(content: string): Promise<HistoryEntry> {
+export async function saveToServer(content: string, transcript?: string): Promise<HistoryEntry> {
   const res = await fetch("/api/minutes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, transcript: transcript || null }),
   });
 
   if (!res.ok) {

@@ -4,22 +4,28 @@ import { useState } from "react";
 
 type MinutesDisplayProps = {
   content: string;
+  transcript?: string;
   onReset: () => void;
   onBack?: () => void;
 };
 
-export default function MinutesDisplay({ content, onReset, onBack }: MinutesDisplayProps) {
+type Tab = "minutes" | "transcript";
+
+export default function MinutesDisplay({ content, transcript, onReset, onBack }: MinutesDisplayProps) {
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>("minutes");
+
+  const displayContent = activeTab === "transcript" && transcript ? transcript : content;
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(content);
+      await navigator.clipboard.writeText(displayContent);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for mobile browsers
+      // フォールバック（モバイルブラウザ用）
       const textarea = document.createElement("textarea");
-      textarea.value = content;
+      textarea.value = displayContent;
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand("copy");
@@ -32,18 +38,45 @@ export default function MinutesDisplay({ content, onReset, onBack }: MinutesDisp
   const handleDownload = () => {
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10);
-    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const suffix = activeTab === "transcript" ? "文字起こし" : "議事録";
+    const blob = new Blob([displayContent], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `議事録_${dateStr}.md`;
+    a.download = `${suffix}_${dateStr}.md`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   return (
     <div className="space-y-4">
-      {/* Action buttons */}
+      {/* タブ切り替え（文字起こしがある場合のみ表示） */}
+      {transcript && (
+        <div className="flex rounded-lg bg-slate-800 p-1">
+          <button
+            onClick={() => { setActiveTab("minutes"); setCopied(false); }}
+            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === "minutes"
+                ? "bg-blue-600 text-white"
+                : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            議事録
+          </button>
+          <button
+            onClick={() => { setActiveTab("transcript"); setCopied(false); }}
+            className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === "transcript"
+                ? "bg-blue-600 text-white"
+                : "text-slate-400 hover:text-slate-300"
+            }`}
+          >
+            文字起こし
+          </button>
+        </div>
+      )}
+
+      {/* アクションボタン */}
       <div className="flex gap-2">
         <button
           onClick={handleCopy}
@@ -59,12 +92,12 @@ export default function MinutesDisplay({ content, onReset, onBack }: MinutesDisp
         </button>
       </div>
 
-      {/* Minutes content */}
+      {/* コンテンツ表示 */}
       <div className="bg-slate-800 rounded-lg p-4 text-sm leading-relaxed whitespace-pre-wrap break-words">
-        {content}
+        {displayContent}
       </div>
 
-      {/* Back to generate buttons */}
+      {/* この音声から再生成 */}
       {onBack && (
         <button
           onClick={onBack}
@@ -74,7 +107,7 @@ export default function MinutesDisplay({ content, onReset, onBack }: MinutesDisp
         </button>
       )}
 
-      {/* New recording button */}
+      {/* 新しい録音を開始 */}
       <button
         onClick={onReset}
         className="w-full py-3 rounded-lg bg-slate-700 hover:bg-slate-600 font-medium transition-colors"
