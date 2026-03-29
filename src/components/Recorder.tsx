@@ -93,12 +93,12 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       compressor.connect(destination);
       const stream = destination.stream;
 
-      // Choose best supported format
-      mimeTypeRef.current = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4";
+      // フォーマット選択: mp4(AAC)を優先（AndroidのWebM/Opusは品質が低いため）
+      mimeTypeRef.current = MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "audio/webm";
 
       // Reset state
       segmentsRef.current = [];
@@ -112,7 +112,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       const startNewRecorder = () => {
         const recorder = new MediaRecorder(stream, {
           mimeType: mimeTypeRef.current,
-          audioBitsPerSecond: 96000,
+          audioBitsPerSecond: 128000,
         });
         chunksRef.current = [];
         recorder.ondataavailable = (e) => {
