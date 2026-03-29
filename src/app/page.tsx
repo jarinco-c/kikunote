@@ -197,19 +197,27 @@ export default function Home() {
 
   const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
 
-  // 音声を文字起こしする（複数セグメント対応・並列処理）
+  // 音声を文字起こしする（複数セグメント対応・順次処理）
   const transcribeAll = async (): Promise<string> => {
     const total = audioSegments.length;
-    setProgress(`音声を文字起こし中... (${total}セグメント)`);
+    const results: string[] = [];
 
-    // 全セグメントを並列で文字起こし
-    const results = await Promise.all(
-      audioSegments.map((segment, i) => transcribeSegment(segment, i, total))
-    );
+    // セグメントを順次処理（Vercel 60秒制限対策：並列だとタイムアウトしやすい）
+    for (let i = 0; i < total; i++) {
+      setProgress(`音声を文字起こし中... (${i + 1}/${total}セグメント)`);
+      const transcript = await transcribeSegment(audioSegments[i], i, total);
+      results.push(transcript);
+    }
 
-    // セグメント順に結合
+    // セグメントが1つなら区切りなしでそのまま返す
+    if (total === 1) {
+      return results[0];
+    }
+
+    // 複数セグメントは連続したテキストとして結合（5分 = Recorder.tsxのSEGMENT_DURATION）
+    const segmentMinutes = 5;
     return results
-      .map((transcript, i) => `--- セグメント ${i + 1}/${total} ---\n${transcript}`)
+      .map((transcript, i) => `[${i * segmentMinutes}分〜${(i + 1) * segmentMinutes}分頃]\n${transcript}`)
       .join("\n\n");
   };
 
