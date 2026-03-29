@@ -16,6 +16,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const [segmentCount, setSegmentCount] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const segmentsRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -51,6 +52,12 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
 
   // Finalize: stop stream and return all segments
   const finalize = useCallback(() => {
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch((err) =>
+        console.error("AudioContext close失敗:", err)
+      );
+      audioContextRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -60,10 +67,31 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
 
   const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const rawStream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1 },
       });
-      streamRef.current = stream;
+      streamRef.current = rawStream;
+
+      // Web Audio APIでゲイン（音量増幅）を適用
+      // Android端末はマイクゲインが低いことがあるため、ソフトウェアで増幅する
+      const audioContext = new AudioContext();
+      if (audioContext.state === "suspended") {
+        await audioContext.resume();
+      }
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(rawStream);
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 3.0; // 3倍に増幅
+      // 音割れ（クリッピング）防止のためコンプレッサーを挟む
+      const compressor = audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -6;
+      compressor.knee.value = 6;
+      compressor.ratio.value = 12;
+      const destination = audioContext.createMediaStreamDestination();
+      source.connect(gainNode);
+      gainNode.connect(compressor);
+      compressor.connect(destination);
+      const stream = destination.stream;
 
       // Choose best supported format
       mimeTypeRef.current = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
