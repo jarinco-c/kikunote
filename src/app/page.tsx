@@ -240,18 +240,11 @@ export default function Home() {
     setMinutes("");
 
     try {
+      // 常に文字起こしを取得（タブ表示用）
+      const transcript = await transcribeAll();
+      setLastTranscript(transcript);
+
       if (mode === "both") {
-        // 文字起こしを1回だけ行う
-        let transcript: string | undefined;
-        const isSmallSingle =
-          audioSegments.length === 1 &&
-          audioSegments[0].size <= 3.5 * 1024 * 1024;
-
-        if (!isSmallSingle) {
-          transcript = await transcribeAll();
-          setLastTranscript(transcript);
-        }
-
         // 議事録を生成
         const minutesText = await generateOne("minutes", transcript);
         await saveToServer(minutesText, transcript);
@@ -264,17 +257,6 @@ export default function Home() {
         // 両方の結果を表示
         setMinutes(minutesText + "\n\n---\n\n" + specText);
       } else {
-        // 文字起こしテキストを取得・保存
-        let transcript: string | undefined;
-        const isSmallSingle =
-          audioSegments.length === 1 &&
-          audioSegments[0].size <= 3.5 * 1024 * 1024;
-
-        if (!isSmallSingle) {
-          transcript = await transcribeAll();
-          setLastTranscript(transcript);
-        }
-
         const fullText = await generateOne(mode, transcript);
         await saveToServer(fullText, transcript);
       }
