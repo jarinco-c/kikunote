@@ -120,25 +120,39 @@ export default function Home() {
     index: number,
     total: number
   ): Promise<string> => {
-    const formData = new FormData();
-    formData.append("audio", blob);
-    formData.append("segmentIndex", String(index + 1));
-    formData.append("totalSegments", String(total));
+    const maxRetries = 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const formData = new FormData();
+        formData.append("audio", blob);
+        formData.append("segmentIndex", String(index + 1));
+        formData.append("totalSegments", String(total));
 
-    const res = await fetch("/api/transcribe", {
-      method: "POST",
-      body: formData,
-    });
+        const res = await fetch("/api/transcribe", {
+          method: "POST",
+          body: formData,
+        });
 
-    if (!res.ok) {
-      const errorText = await res.text();
-      throw new Error(
-        `セグメント${index + 1}の文字起こしに失敗: ${errorText}`
-      );
+        if (!res.ok) {
+          const errorText = await res.text();
+          throw new Error(errorText);
+        }
+
+        const data = await res.json();
+        return data.transcript;
+      } catch (err) {
+        if (attempt < maxRetries) {
+          // リトライ前に少し待つ
+          setProgress(`セグメント${index + 1}を再試行中... (${attempt + 2}/${maxRetries + 1}回目)`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw new Error(
+            `セグメント${index + 1}の文字起こしに失敗: ${err instanceof Error ? err.message : "不明なエラー"}`
+          );
+        }
+      }
     }
-
-    const data = await res.json();
-    return data.transcript;
+    throw new Error("unreachable");
   };
 
   const generateFromAudio = async (blob: Blob, outputType: string = "minutes") => {
@@ -214,8 +228,8 @@ export default function Home() {
       return results[0];
     }
 
-    // 複数セグメントは連続したテキストとして結合（5分 = Recorder.tsxのSEGMENT_DURATION）
-    const segmentMinutes = 5;
+    // 複数セグメントは連続したテキストとして結合（3分 = Recorder.tsxのSEGMENT_DURATION）
+    const segmentMinutes = 3;
     return results
       .map((transcript, i) => `[${i * segmentMinutes}分〜${(i + 1) * segmentMinutes}分頃]\n${transcript}`)
       .join("\n\n");

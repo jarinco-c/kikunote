@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const SEGMENT_DURATION = 5 * 60 * 1000; // 5 minutes per segment
+const SEGMENT_DURATION = 3 * 60 * 1000; // 3分ごとにセグメント分割（Vercel 60秒制限対策）
 
 type RecorderProps = {
   onRecordingComplete: (segments: Blob[], startedAt: string) => void;
