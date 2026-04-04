@@ -97,6 +97,7 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 | user_id | UUID (FK → users.id) | 所有ユーザー |
 | title | TEXT | 議事録タイトル（自動抽出） |
 | content | TEXT | 議事録本文 |
+| transcript | TEXT | 文字起こし原文（nullable） |
 | created_at | TIMESTAMPTZ | 作成日時 |
 
 ## API仕様
@@ -140,13 +141,13 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 ### GET /api/minutes — 議事録一覧
 
 - Cookie: session JWT
-- Response: `[{ "id": "uuid", "title": "string", "content": "string", "created_at": "string" }]`
+- Response: `[{ "id": "uuid", "title": "string", "content": "string", "transcript": "string|null", "created_at": "string" }]`
 
 ### POST /api/minutes — 議事録保存
 
 - Cookie: session JWT
-- Body: `{ "content": "string", "title?": "string", "createdAt?": "string" }`
-- Response 201: `{ "id": "uuid", "title": "string", "content": "string", "created_at": "string" }`
+- Body: `{ "content": "string", "transcript?": "string", "title?": "string", "createdAt?": "string" }`
+- Response 201: `{ "id": "uuid", "title": "string", "content": "string", "transcript": "string|null", "created_at": "string" }`
 
 ### DELETE /api/minutes/[id] — 議事録削除
 
@@ -179,8 +180,8 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - トピック1
 - トピック2
 
-### 議論内容
-（話者ごとの発言を時系列で要約）
+### 議論の要点
+（各議題について要点と結論を簡潔に要約。発言のベタ打ちではなく要約する）
 
 ### 決定事項
 - 決定1
@@ -204,7 +205,7 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 
 ## 制約事項
 
-- **1セグメントあたりの上限**: Vercel無料プランのペイロード上限は4.5MB。5分ごとに自動分割するため通常問題なし
+- **1セグメントあたりの上限**: Vercel無料プランのペイロード上限は4.5MB。3分ごとに自動分割するため通常問題なし
 - **録音時間**: 自動セグメント分割により1時間以上の会議に対応
 - **処理時間**: Vercel無料プランのFunction実行時間は10秒だが、ストリーミングにより長い音声も処理可能
 - **話者分離精度**: Geminiの音声認識に依存。はっきり話す場合に精度が高い
@@ -226,8 +227,11 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - **マルチユーザー認証**: ユーザーID+パスワードでログイン。JWT+httpOnlyクッキーでセッション管理
 - **サーバー側議事録保存**: Supabase(PostgreSQL)に保存。どの端末からでも閲覧可能
 - **履歴機能**: 議事録の一覧表示・閲覧・削除
+- **議事録と文字起こしのタブ切り替え**: 履歴閲覧時に「議事録」（要約）と「文字起こし」（原文）をタブで切り替え表示
 - **録音時刻の自動記録**: 録音開始時のローカル時刻（日本時間）を議事録の日時欄に自動反映
-- **長時間録音**: 5分ごとに自動セグメント分割。各セグメントを並列で文字起こし→結合→議事録整形
+- **長時間録音**: 3分ごとに自動セグメント分割。各セグメントを直列で文字起こし→結合→議事録整形。失敗時は最大2回リトライ
+- **録音品質改善**: Web Audio APIでゲイン3倍増幅 + DynamicsCompressor（Android対策）。mp4(AAC)優先、128kbps
+- **録音データダウンロード**: 管理者のみ、録音後に音声データをダウンロード可能（デバッグ用）
 - **localStorage移行**: 旧バージョンのlocalStorageデータをサーバーに自動移行
 - **管理者画面**: 管理者ユーザーのみ表示。アプリ内からユーザーの新規登録・一覧確認が可能
 - **カスタムアイコン**: PWAアイコン・favicon・Appleタッチアイコンに対応
