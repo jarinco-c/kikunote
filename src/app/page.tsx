@@ -28,7 +28,7 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [minutes, setMinutes] = useState("");
   const [progress, setProgress] = useState("");
-  const [audioSegments, setAudioSegments] = useState<Blob[]>([]);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [recordedAt, setRecordedAt] = useState<string>("");
   const [lastTranscript, setLastTranscript] = useState<string>("");
   const [viewingEntry, setViewingEntry] = useState<HistoryEntry | null>(null);
@@ -103,65 +103,25 @@ export default function Home() {
   };
 
   const handleRecordingComplete = useCallback(
-    (segments: Blob[], startedAt: string) => {
-      setAudioSegments(segments);
+    (blob: Blob, startedAt: string) => {
+      setAudioBlob(blob);
       setRecordedAt(startedAt);
     },
     []
   );
 
   const handleFileSelected = useCallback((file: File) => {
-    setAudioSegments([file]);
+    setAudioBlob(file);
     setRecordedAt("");
   }, []);
 
-  const transcribeSegment = async (
-    blob: Blob,
-    index: number,
-    total: number
-  ): Promise<string> => {
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const formData = new FormData();
-        formData.append("audio", blob);
-        formData.append("segmentIndex", String(index + 1));
-        formData.append("totalSegments", String(total));
-
-        const res = await fetch("/api/transcribe", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(errorText);
-        }
-
-        const data = await res.json();
-        return data.transcript;
-      } catch (err) {
-        if (attempt < maxRetries) {
-          // リトライ前に少し待つ
-          setProgress(`セグメント${index + 1}を再試行中... (${attempt + 2}/${maxRetries + 1}回目)`);
-          await new Promise(r => setTimeout(r, 2000));
-        } else {
-          throw new Error(
-            `セグメント${index + 1}の文字起こしに失敗: ${err instanceof Error ? err.message : "不明なエラー"}`
-          );
-        }
-      }
-    }
-    throw new Error("unreachable");
-  };
-
-  const generateFromAudio = async (blob: Blob, outputType: string = "minutes") => {
+  // 音声を文字起こしする（Gemini Files API経由）
+  const transcribe = async (blob: Blob): Promise<string> => {
+    setProgress("音声を文字起こし中...");
     const formData = new FormData();
     formData.append("audio", blob);
-    formData.append("outputType", outputType);
-    if (recordedAt) formData.append("recordedAt", recordedAt);
 
-    const res = await fetch("/api/generate-minutes", {
+    const res = await fetch("/api/transcribe", {
       method: "POST",
       body: formData,
     });
@@ -170,7 +130,9 @@ export default function Home() {
       const errorText = await res.text();
       throw new Error(errorText || `エラー: ${res.status}`);
     }
-    return res;
+
+    const data = await res.json();
+    return data.transcript;
   };
 
   const generateFromTranscript = async (transcript: string, outputType: string = "minutes") => {
@@ -211,59 +173,22 @@ export default function Home() {
 
   const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
 
-  // 音声を文字起こしする（複数セグメント対応・順次処理）
-  const transcribeAll = async (): Promise<string> => {
-    const total = audioSegments.length;
-    const results: string[] = [];
-
-    // セグメントを順次処理（Vercel 60秒制限対策：並列だとタイムアウトしやすい）
-    for (let i = 0; i < total; i++) {
-      setProgress(`音声を文字起こし中... (${i + 1}/${total}セグメント)`);
-      const transcript = await transcribeSegment(audioSegments[i], i, total);
-      results.push(transcript);
-    }
-
-    // セグメントが1つなら区切りなしでそのまま返す
-    if (total === 1) {
-      return results[0];
-    }
-
-    // 複数セグメントは連続したテキストとして結合（3分 = Recorder.tsxのSEGMENT_DURATION）
-    const segmentMinutes = 3;
-    return results
-      .map((transcript, i) => `[${i * segmentMinutes}分〜${(i + 1) * segmentMinutes}分頃]\n${transcript}`)
-      .join("\n\n");
-  };
-
-  // 1種類を生成して返す
-  const generateOne = async (outputType: string, transcript?: string): Promise<string> => {
-    if (
-      !transcript &&
-      audioSegments.length === 1 &&
-      audioSegments[0].size <= 3.5 * 1024 * 1024
-    ) {
-      // 短い音声は直接AIに渡す
-      setProgress(`AIが音声を分析中...（${typeLabel(outputType)}）`);
-      const res = await generateFromAudio(audioSegments[0], outputType);
-      return await readStream(res);
-    } else {
-      // 文字起こし済みテキストから生成
-      const text = transcript || await transcribeAll();
-      setProgress(`${typeLabel(outputType)}を生成中...`);
-      const res = await generateFromTranscript(text, outputType);
-      return await readStream(res);
-    }
+  // 文字起こしから1種類を生成
+  const generateOne = async (outputType: string, transcript: string): Promise<string> => {
+    setProgress(`${typeLabel(outputType)}を生成中...`);
+    const res = await generateFromTranscript(transcript, outputType);
+    return await readStream(res);
   };
 
   const generate = async (mode: "minutes" | "spec" | "both") => {
-    if (audioSegments.length === 0) return;
+    if (!audioBlob) return;
 
     setState("processing");
     setMinutes("");
 
     try {
-      // 常に文字起こしを取得（タブ表示用）
-      const transcript = await transcribeAll();
+      // まず文字起こしを取得（タブ表示＆再利用のため）
+      const transcript = await transcribe(audioBlob);
       setLastTranscript(transcript);
 
       if (mode === "both") {
@@ -296,7 +221,7 @@ export default function Home() {
   };
 
   const handleReset = () => {
-    setAudioSegments([]);
+    setAudioBlob(null);
     setRecordedAt("");
     setMinutes("");
     setProgress("");
@@ -323,8 +248,6 @@ export default function Home() {
     return <LoginForm onLogin={handleLogin} />;
   }
 
-  const totalSize = audioSegments.reduce((sum, s) => sum + s.size, 0);
-
   return (
     <div className="max-w-lg mx-auto p-4 pb-8">
       <header className="text-center py-4 mb-4">
@@ -349,13 +272,10 @@ export default function Home() {
             disabled={false}
           />
 
-          {audioSegments.length > 0 && (
+          {audioBlob && (
             <div className="space-y-3">
               <div className="text-center text-sm text-slate-400">
-                音声データ準備完了（{(totalSize / 1024 / 1024).toFixed(1)} MB
-                {audioSegments.length > 1 &&
-                  ` / ${audioSegments.length}セグメント`}
-                ）
+                音声データ準備完了（{(audioBlob.size / 1024 / 1024).toFixed(1)} MB）
               </div>
 
               <div className="space-y-2">
@@ -385,28 +305,27 @@ export default function Home() {
                   <div className="text-xs text-slate-500">
                     録音データの確認（デバッグ用）
                   </div>
-                  {audioSegments.map((segment, i) => {
-                    const ext = segment.type.includes("mp4") ? "m4a"
-                              : segment.type.includes("webm") ? "webm"
+                  {(() => {
+                    const ext = audioBlob.type.includes("mp4") ? "m4a"
+                              : audioBlob.type.includes("webm") ? "webm"
                               : "bin";
                     return (
                       <button
-                        key={i}
                         onClick={() => {
-                          const url = URL.createObjectURL(segment);
+                          const url = URL.createObjectURL(audioBlob);
                           const a = document.createElement("a");
                           a.href = url;
-                          a.download = `recording-segment${i + 1}.${ext}`;
+                          a.download = `recording.${ext}`;
                           a.click();
                           // ブラウザがダウンロードを開始するまで待ってから解放
                           setTimeout(() => URL.revokeObjectURL(url), 10000);
                         }}
                         className="w-full py-2 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-400 transition-colors"
                       >
-                        セグメント{i + 1}をダウンロード（{(segment.size / 1024).toFixed(0)} KB / {segment.type}）
+                        録音データをダウンロード（{(audioBlob.size / 1024).toFixed(0)} KB / {audioBlob.type}）
                       </button>
                     );
-                  })}
+                  })()}
                 </div>
               )}
             </div>
@@ -456,7 +375,7 @@ export default function Home() {
           content={minutes}
           transcript={lastTranscript || undefined}
           onReset={handleReset}
-          onBack={audioSegments.length > 0 ? () => {
+          onBack={audioBlob ? () => {
             setMinutes("");
             setProgress("");
             setState("ready");

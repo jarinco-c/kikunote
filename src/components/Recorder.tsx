@@ -2,10 +2,11 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 
-const SEGMENT_DURATION = 3 * 60 * 1000; // 3分ごとにセグメント分割（Vercel 60秒制限対策）
+// Renderの無料プランは15分アクセスがないとスリープするため、録音中は定期的にpingを打つ
+const KEEPALIVE_INTERVAL = 10 * 60 * 1000; // 10分
 
 type RecorderProps = {
-  onRecordingComplete: (segments: Blob[], startedAt: string) => void;
+  onRecordingComplete: (blob: Blob, startedAt: string) => void;
   onFileSelected: (file: File) => void;
   disabled: boolean;
 };
@@ -13,16 +14,12 @@ type RecorderProps = {
 export default function Recorder({ onRecordingComplete, onFileSelected, disabled }: RecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [segmentCount, setSegmentCount] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const segmentsRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const segmentTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isSegmentingRef = useRef(false); // セグメント分割処理中フラグ
-  const stoppingRef = useRef(false); // 録音停止処理中フラグ（タイマーとの競合防止）
+  const keepaliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const startedAtRef = useRef<string>("");
   const mimeTypeRef = useRef<string>("audio/webm");
@@ -33,24 +30,23 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
     onRecordingCompleteRef.current = onRecordingComplete;
   }, [onRecordingComplete]);
 
+  // アンマウント時のリソース解放（録音中に画面遷移した場合のリーク防止）
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (segmentTimerRef.current) clearInterval(segmentTimerRef.current);
+      if (keepaliveTimerRef.current) clearInterval(keepaliveTimerRef.current);
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
     };
   }, []);
 
-  // Save current chunks as a segment
-  const saveCurrentChunks = useCallback(() => {
-    if (chunksRef.current.length > 0) {
-      const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
-      segmentsRef.current.push(blob);
-      chunksRef.current = [];
-      setSegmentCount(segmentsRef.current.length);
-    }
-  }, []);
-
-  // Finalize: stop stream and return all segments
+  // ストリーム・AudioContextを片付けて、録音済みBlobをコールバックに渡す
   const finalize = useCallback(() => {
     if (audioContextRef.current) {
       audioContextRef.current.close().catch((err) =>
@@ -62,7 +58,9 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-    onRecordingCompleteRef.current([...segmentsRef.current], startedAtRef.current);
+    const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
+    chunksRef.current = [];
+    onRecordingCompleteRef.current(blob, startedAtRef.current);
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -100,107 +98,77 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
           ? "audio/webm;codecs=opus"
           : "audio/webm";
 
-      // Reset state
-      segmentsRef.current = [];
       chunksRef.current = [];
-      setSegmentCount(0);
 
       const now = new Date();
       startedAtRef.current = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`;
 
-      // Start recorder
-      const startNewRecorder = () => {
-        const recorder = new MediaRecorder(stream, {
-          mimeType: mimeTypeRef.current,
-          audioBitsPerSecond: 128000,
-        });
-        chunksRef.current = [];
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunksRef.current.push(e.data);
-        };
-        recorder.start(1000);
-        mediaRecorderRef.current = recorder;
+      const recorder = new MediaRecorder(stream, {
+        mimeType: mimeTypeRef.current,
+        audioBitsPerSecond: 128000,
+      });
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
       };
+      recorder.start(1000);
+      mediaRecorderRef.current = recorder;
 
-      startNewRecorder();
       setIsRecording(true);
       setElapsed(0);
 
-      // Elapsed timer
+      // 経過時間タイマー
       timerRef.current = setInterval(() => {
         setElapsed((prev) => prev + 1);
       }, 1000);
 
-      // 自動セグメント分割タイマー: 旧レコーダーの停止完了を待ってからセグメント保存＆新レコーダー開始
-      segmentTimerRef.current = setInterval(() => {
-        const recorder = mediaRecorderRef.current;
-        if (recorder && recorder.state === "recording" && !isSegmentingRef.current && !stoppingRef.current) {
-          isSegmentingRef.current = true;
-          recorder.onstop = () => {
-            saveCurrentChunks();
-            try {
-              startNewRecorder();
-            } catch (err) {
-              console.error("セグメント分割中にレコーダー再開失敗:", err);
-              // ストリーム切断等の場合は録音を終了
-              if (timerRef.current) {
-                clearInterval(timerRef.current);
-                timerRef.current = null;
-              }
-              if (segmentTimerRef.current) {
-                clearInterval(segmentTimerRef.current);
-                segmentTimerRef.current = null;
-              }
-              setIsRecording(false);
-              finalize();
-            }
-            isSegmentingRef.current = false;
-          };
-          recorder.stop();
-        }
-      }, SEGMENT_DURATION);
+      // キープアライブpingタイマー（Render無料プランのスリープ防止）
+      // ネットワーク切断時に ping が積み上がらないよう 30秒 で abort する
+      keepaliveTimerRef.current = setInterval(() => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        fetch("/api/ping", { signal: controller.signal })
+          .catch((err) => {
+            console.warn("キープアライブping失敗:", err);
+          })
+          .finally(() => clearTimeout(timeout));
+      }, KEEPALIVE_INTERVAL);
     } catch (err) {
       alert("マイクへのアクセスが許可されていません。ブラウザの設定を確認してください。");
       console.error(err);
     }
-  }, [saveCurrentChunks]);
+  }, []);
 
   const stopRecording = useCallback(() => {
-    // Clear timers first
-    if (segmentTimerRef.current) {
-      clearInterval(segmentTimerRef.current);
-      segmentTimerRef.current = null;
-    }
+    // タイマーを先に止める
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
+    if (keepaliveTimerRef.current) {
+      clearInterval(keepaliveTimerRef.current);
+      keepaliveTimerRef.current = null;
+    }
 
     setIsRecording(false);
-    stoppingRef.current = true;
 
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state === "recording") {
-      // レコーダー停止完了を待ってから最終セグメント保存
+    if (recorder && recorder.state !== "inactive") {
+      // レコーダー停止完了を待ってからfinalize
       recorder.onstop = () => {
-        saveCurrentChunks();
         finalize();
       };
-      recorder.stop();
-    } else if (isSegmentingRef.current) {
-      // セグメント分割処理中の場合、完了を待ってからfinalize
-      const waitForSegmenting = setInterval(() => {
-        if (!isSegmentingRef.current) {
-          clearInterval(waitForSegmenting);
-          finalize();
-        }
-      }, 100);
+      try {
+        recorder.stop();
+      } catch (err) {
+        // recorder.stop() が例外を投げた場合は onstop が発火しないため
+        // 直接 finalize を呼んで MediaStream/AudioContext を確実に解放する
+        console.error("recorder.stop失敗:", err);
+        finalize();
+      }
     } else {
-      // レコーダー停止済み: 残りのチャンクを保存してfinalize
-      saveCurrentChunks();
       finalize();
     }
-  }, [saveCurrentChunks, finalize]);
+  }, [finalize]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -236,11 +204,6 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       {isRecording && (
         <div className="text-center">
           <div className="text-3xl font-mono text-red-400">{formatTime(elapsed)}</div>
-          {segmentCount > 0 && (
-            <div className="text-xs text-slate-500 mt-1">
-              {segmentCount} セグメント保存済み
-            </div>
-          )}
         </div>
       )}
 
