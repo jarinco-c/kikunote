@@ -87,7 +87,15 @@
 npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名]
 ```
 
-※ `.env.local` に `SUPABASE_URL` と `SUPABASE_SERVICE_ROLE_KEY` が設定されている必要あり
+### パスワードリセット方法
+
+```bash
+npx tsx src/scripts/reset-password.ts <ユーザーID> <新しいパスワード>
+```
+
+既存ユーザーの password_hash のみを更新する。管理者パスワードを忘れた時や、運用中のリセットに使う。
+
+※ どちらのスクリプトも `.env.local` に `SUPABASE_URL` と `SUPABASE_SERVICE_ROLE_KEY` が設定されている必要あり
 
 ## DBスキーマ（Supabase）
 
@@ -225,6 +233,8 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - **Render無料プランの制約**:
   - 15分無アクセスでスリープ → 録音中は `/api/ping` を10分毎に叩いて防止
   - 初回アクセス時にコールドスタート（30〜60秒）→ 会議開始前にアプリを開いて起こしておく運用
+- **iPhone自動ロック対策**: Screen Wake Lock API で画面スリープを抑止（録音中のみ）。非対応ブラウザでは無音スキップし、iOSの自動ロック設定を手動でOffにする運用でカバー
+- **Supabase Freeの制約**: 7日間アクセスがないとProjectがPaused状態になる。復旧はSupabase dashboardで「Resume project」ボタンを押す
 - **話者分離精度**: Geminiの音声認識に依存
 - **対応音声形式**: WebM/Opus（ブラウザ録音）、MP4/AAC、MP3、WAV、M4A等
 - **DB容量**: Supabase無料プランは500MB。テキストのみなので十分
@@ -257,6 +267,7 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - **録音時刻の自動記録**: 録音開始時のローカル時刻（日本時間）を議事録の日時欄に自動反映
 - **長時間録音対応**: 単一Blob録音 + Gemini Files API経由で長時間音声を安定処理。セグメント分割は廃止済み
 - **録音中のキープアライブ**: 録音開始と同時に10分間隔で `/api/ping` を叩き、Renderのスリープを防止
+- **画面スリープ抑止**: 録音中に `navigator.wakeLock.request("screen")` で画面を起こし続ける。iPhone自動ロックによるMediaRecorder停止を防ぐ
 - **録音品質改善**: Web Audio APIでゲイン3倍増幅 + DynamicsCompressor（Android対策）。mp4(AAC)優先、128kbps
 - **録音データダウンロード**: 管理者のみ、録音後に音声データをダウンロード可能（デバッグ用）
 - **localStorage移行**: 旧バージョンのlocalStorageデータをサーバーに自動移行
