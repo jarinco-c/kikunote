@@ -20,10 +20,36 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const keepaliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const startedAtRef = useRef<string>("");
   const mimeTypeRef = useRef<string>("audio/webm");
   const onRecordingCompleteRef = useRef(onRecordingComplete);
+
+  // Screen Wake Lock（録音中の画面スリープ抑止）
+  // iPhoneの自動ロックでMediaRecorderが停止するのを防ぐ
+  const requestWakeLock = useCallback(async () => {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      const lock = await navigator.wakeLock.request("screen");
+      lock.addEventListener("release", () => {
+        // タブがバックグラウンドに行くと自動で release される。参照を外すだけ
+        if (wakeLockRef.current === lock) {
+          wakeLockRef.current = null;
+        }
+      });
+      wakeLockRef.current = lock;
+    } catch (err) {
+      console.warn("Wake Lock取得失敗:", err);
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }, []);
 
   // Keep callback ref up to date
   useEffect(() => {
@@ -35,6 +61,10 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (keepaliveTimerRef.current) clearInterval(keepaliveTimerRef.current);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
@@ -45,6 +75,19 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       }
     };
   }, []);
+
+  // タブがフォアグラウンドに戻ったらWake Lockを再取得
+  // （バックグラウンド時に自動releaseされるため）
+  useEffect(() => {
+    if (!isRecording) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && !wakeLockRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [isRecording, requestWakeLock]);
 
   // ストリーム・AudioContextを片付けて、録音済みBlobをコールバックに渡す
   const finalize = useCallback(() => {
@@ -116,6 +159,9 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       setIsRecording(true);
       setElapsed(0);
 
+      // 画面スリープ抑止（iPhone自動ロック対策）
+      await requestWakeLock();
+
       // 経過時間タイマー
       timerRef.current = setInterval(() => {
         setElapsed((prev) => prev + 1);
@@ -136,7 +182,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       alert("マイクへのアクセスが許可されていません。ブラウザの設定を確認してください。");
       console.error(err);
     }
-  }, []);
+  }, [requestWakeLock]);
 
   const stopRecording = useCallback(() => {
     // タイマーを先に止める
@@ -148,6 +194,9 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       clearInterval(keepaliveTimerRef.current);
       keepaliveTimerRef.current = null;
     }
+
+    // Wake Lock解放（画面スリープ抑止を解除）
+    releaseWakeLock();
 
     setIsRecording(false);
 
@@ -168,7 +217,7 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
     } else {
       finalize();
     }
-  }, [finalize]);
+  }, [finalize, releaseWakeLock]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
