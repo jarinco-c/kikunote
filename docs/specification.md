@@ -13,10 +13,10 @@
 | フレームワーク | Next.js 15 (App Router) |
 | 言語 | TypeScript |
 | スタイリング | Tailwind CSS |
-| AI API | Google Gemini 2.5 Flash（音声処理＋議事録生成） |
+| AI API | Google Gemini 2.5 Flash（Files API経由で音声処理、テキストストリームで議事録生成） |
 | データベース | Supabase（PostgreSQL） |
 | 認証 | JWT + httpOnly Cookie |
-| ホスティング | Vercel（無料プラン） |
+| ホスティング | Render（無料プラン、Nodeランタイム） |
 | PWA | Service Worker + Web App Manifest |
 
 ## アーキテクチャ
@@ -25,32 +25,45 @@
 ┌─────────────────────────────┐
 │  スマホ / PC ブラウザ (PWA)   │
 │  - 録音 (MediaRecorder API)  │
-│  - 音声ファイルアップロード     │
+│  - 単一Blob連続録音           │
+│  - 録音中10分毎に /api/ping   │
 │  - JWT Cookie で認証          │
 └──────────┬──────────────────┘
-           │ FormData (音声) / JSON
+           │ FormData (audio) / JSON (transcript)
            ▼
-┌─────────────────────────────┐
-│  Vercel Serverless Function      │
-│  /api/auth (認証)                │
-│  /api/transcribe (セグメント単位) │
-│  /api/generate-minutes (整形)    │
-│  /api/minutes (CRUD)             │
-│  - JWT Cookie 検証               │
-│  - Supabase DB 読み書き          │
-│  - Gemini APIにストリーミング送信  │
-└──────────┬──────────────────┘
+┌─────────────────────────────────────┐
+│  Render Web Service (Node, 常時稼働) │
+│  /api/auth             (認証)        │
+│  /api/transcribe       (文字起こし)   │
+│  /api/generate-minutes (整形・ストリーム)│
+│  /api/minutes          (CRUD)        │
+│  /api/ping             (キープアライブ)│
+│  - JWT Cookie 検証                   │
+│  - Supabase DB 読み書き              │
+│  - Gemini Files API 経由で音声処理    │
+└──────────┬──────────────────────────┘
            │
      ┌─────┴─────┐
      ▼           ▼
-┌──────────┐ ┌──────────────┐
-│ Supabase │ │ Gemini 2.5   │
-│ (DB)     │ │ Flash (AI)   │
-│ - users  │ │ - 音声認識    │
-│ - minutes│ │ - 話者分離    │
-└──────────┘ │ - 議事録整形  │
-             └──────────────┘
+┌──────────┐ ┌────────────────────┐
+│ Supabase │ │ Gemini 2.5 Flash   │
+│ (DB)     │ │ - Files API (音声)  │
+│ - users  │ │ - generateContent   │
+│ - minutes│ │ - streaming text   │
+└──────────┘ └────────────────────┘
 ```
+
+### 処理フロー（録音 → 議事録）
+
+1. クライアントが単一Blobで録音（セグメント分割なし）
+2. クライアントが `/api/transcribe` に音声をPOST
+3. サーバーが `/tmp` に一時保存 → Gemini Files API にアップロード
+4. ファイルが `ACTIVE` になるまでポーリング（1回数秒、2秒間隔）
+5. `generateContent` で文字起こし（fileDataリファレンス使用）
+6. 文字起こし結果をクライアントに返却、一時ファイルとGemini側ファイルを削除
+7. クライアントが `/api/generate-minutes` にtranscriptをPOST
+8. サーバーが `generateContentStream` でストリーム返却
+9. クライアントが逐次表示 → 完了後にSupabaseへ保存
 
 ## 画面遷移
 
@@ -121,22 +134,24 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 ### POST /api/transcribe — 文字起こし
 
 - Cookie: session JWT（認証）
-- Body: `FormData` with `audio` field, optional `segmentIndex` / `totalSegments`
+- Body: `FormData` with `audio` field（単一Blob、セグメント分割なし）
+- サーバー側処理: Gemini Files API にアップロード → ACTIVE待機 → generateContent → ファイル削除
 - Response: `{ "transcript": "string" }`
 
 ### POST /api/generate-minutes — 議事録生成
 
-**モード1: 音声から直接（短い録音向け）**
 - Cookie: session JWT
-- Body: `FormData` with `audio` field, optional `recordedAt`
+- Content-Type: `application/json`
+- Body: `{ "transcript": "string", "recordedAt?": "string", "outputType?": "minutes" | "spec" }`
 - Response: `text/plain` (streaming)
 
-**モード2: 文字起こしテキストから（長時間録音向け）**
-- Cookie: session JWT, `Content-Type: application/json`
-- Body: `{ "transcript": "string", "recordedAt": "string", "outputType?": "minutes" | "spec" }`
-- Response: `text/plain` (streaming)
+`outputType`: `"minutes"`（議事録、デフォルト）または `"spec"`（仕様書）
 
-`outputType` パラメータ: `"minutes"`（議事録、デフォルト）または `"spec"`（仕様書）。FormDataの場合は `outputType` フィールドで指定。
+### GET /api/ping — キープアライブ
+
+- 認証なし、誰でも叩ける
+- Response: `"ok"` (text/plain)
+- 用途: Render無料プランの15分スリープ防止。クライアントから録音中に10分間隔で叩く
 
 ### GET /api/minutes — 議事録一覧
 
@@ -205,22 +220,33 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 
 ## 制約事項
 
-- **1セグメントあたりの上限**: Vercel無料プランのペイロード上限は4.5MB。3分ごとに自動分割するため通常問題なし
-- **録音時間**: 自動セグメント分割により1時間以上の会議に対応
-- **処理時間**: Vercel無料プランのFunction実行時間は10秒だが、ストリーミングにより長い音声も処理可能
-- **話者分離精度**: Geminiの音声認識に依存。はっきり話す場合に精度が高い
-- **対応音声形式**: WebM/Opus（ブラウザ録音）、MP3、WAV、M4A等
+- **録音ファイルサイズ**: Render側のボディサイズ制限に依存（通常十分）。Gemini Files API は最大2GB / 9.5時間まで対応
+- **録音時間**: 理論上9時間超まで対応。実用範囲は数時間
+- **Render無料プランの制約**:
+  - 15分無アクセスでスリープ → 録音中は `/api/ping` を10分毎に叩いて防止
+  - 初回アクセス時にコールドスタート（30〜60秒）→ 会議開始前にアプリを開いて起こしておく運用
+- **話者分離精度**: Geminiの音声認識に依存
+- **対応音声形式**: WebM/Opus（ブラウザ録音）、MP4/AAC、MP3、WAV、M4A等
 - **DB容量**: Supabase無料プランは500MB。テキストのみなので十分
 
 ## デプロイ手順
 
 1. GitHubにリポジトリを作成してpush
-2. [Vercel](https://vercel.com) にGitHubでログイン
-3. 「Import Project」でリポジトリを選択
-4. 環境変数に `GEMINI_API_KEY`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`JWT_SECRET` を設定
-5. 「Deploy」ボタンを押す
-6. 発行されたURL（`https://xxx.vercel.app`）にスマホでアクセス
-7. ホーム画面に追加すればアプリとして使える
+2. [Render](https://render.com) にGitHubでログイン
+3. 「New +」→「Web Service」でGitHubリポジトリを選択
+4. 設定:
+   - Environment: Node
+   - Build Command: `npm install && npm run build`
+   - Start Command: `npm start`
+   - Region: Singapore（日本から最寄り）
+   - Instance Type: Free
+   - Health Check Path: `/api/ping`
+5. 環境変数 `GEMINI_API_KEY`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`JWT_SECRET` を設定
+6. 「Create Web Service」でデプロイ（5〜10分）
+7. 発行されたURL（`https://xxx.onrender.com`）にアクセス
+8. スマホでホーム画面に追加すればPWAとして使える
+
+※ リポジトリに `render.yaml` が含まれているため、Blueprint機能を使えば対話不要で自動設定可能
 
 ## 実装済み機能
 
@@ -229,14 +255,14 @@ npx tsx src/scripts/create-user.ts <ユーザーID> <パスワード> [表示名
 - **履歴機能**: 議事録の一覧表示・閲覧・削除
 - **議事録と文字起こしのタブ切り替え**: 履歴閲覧時に「議事録」（要約）と「文字起こし」（原文）をタブで切り替え表示
 - **録音時刻の自動記録**: 録音開始時のローカル時刻（日本時間）を議事録の日時欄に自動反映
-- **長時間録音**: 3分ごとに自動セグメント分割。各セグメントを直列で文字起こし→結合→議事録整形。失敗時は最大2回リトライ
+- **長時間録音対応**: 単一Blob録音 + Gemini Files API経由で長時間音声を安定処理。セグメント分割は廃止済み
+- **録音中のキープアライブ**: 録音開始と同時に10分間隔で `/api/ping` を叩き、Renderのスリープを防止
 - **録音品質改善**: Web Audio APIでゲイン3倍増幅 + DynamicsCompressor（Android対策）。mp4(AAC)優先、128kbps
 - **録音データダウンロード**: 管理者のみ、録音後に音声データをダウンロード可能（デバッグ用）
 - **localStorage移行**: 旧バージョンのlocalStorageデータをサーバーに自動移行
 - **管理者画面**: 管理者ユーザーのみ表示。アプリ内からユーザーの新規登録・一覧確認が可能
 - **カスタムアイコン**: PWAアイコン・favicon・Appleタッチアイコンに対応
-- **仕様書生成**: 音声から仕様書を自動生成。議事録・仕様書・両方の3モードから選択可能
-- **再生成機能**: 生成完了後に「この音声から再生成」ボタンで録音データを保持したまま戻り、別の種類で再生成可能
+- **仕様書生成**: 文字起こしから仕様書を自動生成。議事録・仕様書・両方の3モードから選択可能
 
 ## 今後の拡張候補
 
