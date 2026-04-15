@@ -134,6 +134,22 @@ export default function Recorder({ onRecordingComplete, onFileSelected, disabled
       compressor.connect(destination);
       const stream = destination.stream;
 
+      // iOS Safari 通常タブ向けの画面ロック抑止（NoSleep.js 同様のハック）
+      // Wake Lock API だけでは通常タブで画面ロックを完全に防げないため、
+      // スピーカーに無音を流し続けてタブを「オーディオ再生中」扱いにする
+      // 停止は audioContext.close()（finalize / unmount cleanup）任せ。
+      // AudioContext を再利用する改修を入れる場合は silentSource.stop() が必要
+      const silentBuffer = audioContext.createBuffer(
+        1,
+        audioContext.sampleRate,
+        audioContext.sampleRate
+      );
+      const silentSource = audioContext.createBufferSource();
+      silentSource.buffer = silentBuffer;
+      silentSource.loop = true;
+      silentSource.connect(audioContext.destination);
+      silentSource.start();
+
       // フォーマット選択: mp4(AAC)を優先（AndroidのWebM/Opusは品質が低いため）
       mimeTypeRef.current = MediaRecorder.isTypeSupported("audio/mp4")
         ? "audio/mp4"

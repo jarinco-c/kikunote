@@ -267,7 +267,7 @@ npx tsx src/scripts/reset-password.ts <ユーザーID> <新しいパスワード
 - **録音時刻の自動記録**: 録音開始時のローカル時刻（日本時間）を議事録の日時欄に自動反映
 - **長時間録音対応**: 単一Blob録音 + Gemini Files API経由で長時間音声を安定処理。セグメント分割は廃止済み
 - **録音中のキープアライブ**: 録音開始と同時に10分間隔で `/api/ping` を叩き、Renderのスリープを防止
-- **画面スリープ抑止**: 録音中に `navigator.wakeLock.request("screen")` で画面を起こし続ける。iPhone自動ロックによるMediaRecorder停止を防ぐ
+- **画面スリープ抑止**: 録音中に `navigator.wakeLock.request("screen")` で画面を起こし続ける。iOS Safari 通常タブでは Wake Lock だけでは不十分なため、AudioContext から無音を出力し続けるハック（NoSleep.js 同様）も併用
 - **録音品質改善**: Web Audio APIでゲイン3倍増幅 + DynamicsCompressor（Android対策）。mp4(AAC)優先、128kbps
 - **録音データダウンロード**: 管理者のみ、録音後に音声データをダウンロード可能（デバッグ用）
 - **localStorage移行**: 旧バージョンのlocalStorageデータをサーバーに自動移行
