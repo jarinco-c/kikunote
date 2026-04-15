@@ -7,11 +7,12 @@ type MinutesDisplayProps = {
   transcript?: string;
   onReset: () => void;
   onBack?: () => void;
+  onGenerateSpec?: () => void;
 };
 
 type Tab = "minutes" | "transcript";
 
-export default function MinutesDisplay({ content, transcript, onReset, onBack }: MinutesDisplayProps) {
+export default function MinutesDisplay({ content, transcript, onReset, onBack, onGenerateSpec }: MinutesDisplayProps) {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("minutes");
 
@@ -104,6 +105,16 @@ export default function MinutesDisplay({ content, transcript, onReset, onBack }:
           className="w-full py-3 rounded-lg bg-slate-700 hover:bg-slate-600 font-medium transition-colors"
         >
           この音声から再生成
+        </button>
+      )}
+
+      {/* 文字起こしから仕様書を生成（履歴閲覧時のみ） */}
+      {onGenerateSpec && transcript && (
+        <button
+          onClick={onGenerateSpec}
+          className="w-full py-3 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-medium transition-colors"
+        >
+          この文字起こしから仕様書を生成
         </button>
       )}
 

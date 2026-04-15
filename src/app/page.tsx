@@ -135,13 +135,21 @@ export default function Home() {
     return data.transcript;
   };
 
-  const generateFromTranscript = async (transcript: string, outputType: string = "minutes") => {
+  const generateFromTranscript = async (
+    transcript: string,
+    outputType: string = "minutes",
+    overrideRecordedAt?: string
+  ) => {
     const res = await fetch("/api/generate-minutes", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ transcript, recordedAt, outputType }),
+      body: JSON.stringify({
+        transcript,
+        recordedAt: overrideRecordedAt ?? recordedAt,
+        outputType,
+      }),
     });
 
     if (!res.ok) {
@@ -174,9 +182,13 @@ export default function Home() {
   const typeLabel = (t: string) => (t === "spec" ? "仕様書" : "議事録");
 
   // 文字起こしから1種類を生成
-  const generateOne = async (outputType: string, transcript: string): Promise<string> => {
+  const generateOne = async (
+    outputType: string,
+    transcript: string,
+    overrideRecordedAt?: string
+  ): Promise<string> => {
     setProgress(`${typeLabel(outputType)}を生成中...`);
-    const res = await generateFromTranscript(transcript, outputType);
+    const res = await generateFromTranscript(transcript, outputType, overrideRecordedAt);
     return await readStream(res);
   };
 
@@ -234,6 +246,41 @@ export default function Home() {
     setMinutes(entry.content);
     setViewingEntry(entry);
     setState("viewing");
+  };
+
+  // ISO日時を録音時と同じ「YYYY年M月D日 HH:MM」形式に変換
+  const formatRecordedAt = (iso: string): string => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+  };
+
+  // 履歴閲覧中のエントリの文字起こしから仕様書を生成（新しい履歴エントリとして保存）
+  const handleGenerateSpecFromHistory = async () => {
+    if (!viewingEntry?.transcript) return;
+
+    const transcript = viewingEntry.transcript;
+    const overrideRecordedAt = formatRecordedAt(viewingEntry.created_at);
+
+    setLastTranscript(transcript);
+    setMinutes("");
+    setProgress("");
+    setState("processing");
+
+    try {
+      const specText = await generateOne("spec", transcript, overrideRecordedAt);
+      await saveToServer(specText, transcript);
+      setViewingEntry(null);
+      setState("done");
+    } catch (err) {
+      console.error(err);
+      const message =
+        err instanceof Error ? err.message : "エラーが発生しました";
+      setProgress("");
+      setMinutes("");
+      alert(`生成に失敗しました: ${message}`);
+      setState("viewing");
+    }
   };
 
   if (state === "loading") {
@@ -400,6 +447,9 @@ export default function Home() {
             setViewingEntry(null);
             setState("history");
           }}
+          onGenerateSpec={
+            viewingEntry.transcript ? handleGenerateSpecFromHistory : undefined
+          }
         />
       )}
 
