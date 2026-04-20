@@ -58,12 +58,22 @@
 1. クライアントが単一Blobで録音（セグメント分割なし）
 2. クライアントが `/api/transcribe` に音声をPOST
 3. サーバーが `/tmp` に一時保存 → Gemini Files API にアップロード
-4. ファイルが `ACTIVE` になるまでポーリング（1回数秒、2秒間隔）
-5. `generateContent` で文字起こし（fileDataリファレンス使用）
-6. 文字起こし結果をクライアントに返却、一時ファイルとGemini側ファイルを削除
+4. ファイルが `ACTIVE` になるまでポーリング（2秒間隔、最大15分）
+5. `generateContentStream` で文字起こし（fileDataリファレンス使用）
+6. **NDJSON ストリーム**で進捗と文字起こしチャンクをクライアントへ逐次返却。一時ファイルとGemini側ファイルを finally で削除（クライアント切断時も cancel ハンドラで cleanup）
 7. クライアントが `/api/generate-minutes` にtranscriptをPOST
 8. サーバーが `generateContentStream` でストリーム返却
 9. クライアントが逐次表示 → 完了後にSupabaseへ保存
+
+### /api/transcribe のストリーム仕様（NDJSON）
+
+iOS Safari が長時間 idle な fetch を drop する問題を避けるため、処理中は定期的に進捗メッセージをストリーム送信する。1行1 JSON の NDJSON 形式:
+
+- `{type:"progress", stage:"uploading"}`
+- `{type:"progress", stage:"processing", elapsed:<秒>}`
+- `{type:"progress", stage:"transcribing"}`
+- `{type:"transcript", text:"<文字起こしチャンク>"}`（複数）
+- `{type:"done"}` or `{type:"error", message}`
 
 ## 画面遷移
 

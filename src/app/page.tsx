@@ -115,9 +115,11 @@ export default function Home() {
     setRecordedAt("");
   }, []);
 
-  // 音声を文字起こしする（Gemini Files API経由）
+  // 音声を文字起こしする（Gemini Files API経由、NDJSONストリーム）
+  // サーバから progress メッセージが定期的に流れてくるので、
+  // iOS Safari が idle な fetch を drop するのを防ぐ
   const transcribe = async (blob: Blob): Promise<string> => {
-    setProgress("音声を文字起こし中...");
+    setProgress("音声をアップロード中...");
     const formData = new FormData();
     formData.append("audio", blob);
 
@@ -126,13 +128,61 @@ export default function Home() {
       body: formData,
     });
 
-    if (!res.ok) {
-      const errorText = await res.text();
+    if (!res.ok || !res.body) {
+      const errorText = await res.text().catch(() => "");
       throw new Error(errorText || `エラー: ${res.status}`);
     }
 
-    const data = await res.json();
-    return data.transcript;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let transcript = "";
+    let errorMessage: string | null = null;
+    let sawDone = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // プロキシ経由の CRLF にも耐えるため \r?\n で split
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as
+            | { type: "progress"; stage: string; elapsed?: number }
+            | { type: "transcript"; text: string }
+            | { type: "done" }
+            | { type: "error"; message: string };
+
+          if (msg.type === "progress") {
+            if (msg.stage === "uploading") {
+              setProgress("Geminiにアップロード中...");
+            } else if (msg.stage === "processing") {
+              setProgress(`Gemini処理中... ${msg.elapsed ?? 0}秒経過`);
+            } else if (msg.stage === "transcribing") {
+              setProgress("文字起こし生成中...");
+            }
+          } else if (msg.type === "transcript") {
+            transcript += msg.text;
+          } else if (msg.type === "error") {
+            errorMessage = msg.message;
+          } else if (msg.type === "done") {
+            sawDone = true;
+          }
+        } catch (err) {
+          // パース失敗した行はログのみ出して続行
+          console.warn("NDJSON行のパース失敗:", line.slice(0, 100), err);
+        }
+      }
+    }
+
+    if (errorMessage) throw new Error(errorMessage);
+    if (!sawDone) throw new Error("文字起こしが途中で切断されました");
+    return transcript;
   };
 
   const generateFromTranscript = async (
